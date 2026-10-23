@@ -4,6 +4,8 @@ using System.Linq;
 using Multicad;
 using Multicad.DatabaseServices;
 using Multicad.CustomObjectBase;
+using Teigha.DatabaseServices;
+using HostMgd.ApplicationServices;
 using App = HostMgd.ApplicationServices.Application;
 
 namespace CadEngine.Services
@@ -104,9 +106,19 @@ namespace CadEngine.Services
                         return new { success = false, error = "Нет выбранных объектов. Выделите объекты в nanoCAD и повторите." };
 
                     var result = new List<object>();
+                    var db = HostApplicationServices.WorkingDatabase;
                     foreach (HostMgd.EditorInput.SelectedObject so in sel.Value)
                     {
-                        var mcId = McObjectId.FromOldId(so.ObjectId.OldId);
+                        // ObjectId → Handle → McObjectId (FromOldId недоступен в NC26)
+                        long handleValue;
+                        using (var tr = db.TransactionManager.StartTransaction())
+                        {
+                            var ent = tr.GetObject(so.ObjectId, OpenMode.ForRead) as Entity;
+                            if (ent == null) { tr.Commit(); continue; }
+                            handleValue = ent.Handle.Value;
+                            tr.Commit();
+                        }
+                        var mcId = McObjectId.FromHandle(handleValue);
                         var obj = mcId.GetObject();
                         if (obj == null) continue;
                         result.Add(DumpSingle(mcId, obj));
@@ -134,10 +146,11 @@ namespace CadEngine.Services
                 ["is_custom_object"] = obj is McCustomBase
             };
 
-            // Свойства объекта через универсальный механизм платформы
+            // Свойства объекта через универсальный механизм платформы:
+            // DbEntity есть у McEntity (а не у базового McObject)
             try
             {
-                var props = obj.DbEntity?.ObjectProperties;
+                McProperties? props = (obj as McEntity)?.DbEntity?.ObjectProperties;
                 if (props != null)
                 {
                     var names = props.GetNames();
