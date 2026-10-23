@@ -1,0 +1,14 @@
+diff --git a/engine/CadEngine.Plugin/HttpServer.cs b/engine/CadEngine.Plugin/HttpServer.cs
+index 7080a0a..125b33d 100644
+--- a/engine/CadEngine.Plugin/HttpServer.cs
++++ b/engine/CadEngine.Plugin/HttpServer.cs
+@@ -222,6 +222,9 @@ namespace CadEngine
+             if (method == "GET" && TryMatch(path, "/api/electro/model/node/{acid}", out var nodeAcid))
+                 return _electroModelService.DumpNode(nodeAcid!);
+ 
++            if (method == "GET" && TryMatch(path, "/api/electro/model/group/create/{acid}", out var groupBoardAcid))
++                return _electroModelService.CreateTestGroup(groupBoardAcid!);
++
+             // System
+             if (method == "GET" && path == "/api/system/info")
+                 return _systemService.GetInfo();
