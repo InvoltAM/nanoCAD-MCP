@@ -235,16 +235,7 @@ namespace CadEngine.Services
                     var net = GetNet(out var err);
                     if (net == null) return new { success = false, error = err };
 
-                    object? target = null;
-                    if (net.GetType().GetProperty("Nodes")?.GetValue(net) is IEnumerable nodes)
-                    {
-                        foreach (var node in nodes)
-                        {
-                            if (node == null) continue;
-                            var id = GetProp<object>(node, "AcId")?.ToString();
-                            if (id == acId) { target = node; break; }
-                        }
-                    }
+                    var target = FindNodeByAcId(net, acId);
                     if (target == null)
                         return new { success = false, error = $"Узел с AcId {acId} не найден" };
 
@@ -257,44 +248,159 @@ namespace CadEngine.Services
             });
         }
 
-        private static object DumpNodeDeep(object node, int depth)
+        /// <summary>
+        /// PoC M2: создать тестовую группу (фидер) в существующем щите.
+        /// DbElFiderKitItem конструируется программно: enum'ы и Db-автомат
+        /// копируются с эталонного отходящего фидера этого же щита.
+        /// </summary>
+        public object CreateTestGroup(string boardAcId)
         {
-            var t = node.GetType();
-            var values = new Dictionary<string, object?>();
-            foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            return MainThreadExecutor.Execute(() =>
             {
-                if (p.GetIndexParameters().Length > 0 || !p.CanRead) continue;
-                object? v;
-                try { v = p.GetValue(node); }
-                catch (Exception ex) { values[p.Name] = $"<err: {ex.Message}>"; continue; }
-                values[p.Name] = SafeVal(v, depth);
-            }
-            return new Dictionary<string, object?>
-            {
-                ["success"] = true,
-                ["type"] = t.FullName,
-                ["title"] = GetProp<string>(node, "TitleName"),
-                ["ac_id"] = GetProp<object>(node, "AcId")?.ToString(),
-                ["properties_count"] = values.Count,
-                ["properties"] = values
-            };
+                try
+                {
+                    var net = GetNet(out var err);
+                    if (net == null) return new { success = false, error = err };
+
+                    var board = FindNodeByAcId(net, boardAcId);
+                    if (board == null)
+                        return new { success = false, error = $"Щит {boardAcId} не найден в модели" };
+                    if (board.GetType().FullName != BoardTypeName)
+                        return new { success = false, error = $"Узел {boardAcId} не ElBoard, а {board.GetType().FullName}" };
+
+                    // Эталонный отходящий фидер щита
+                    object? refFider = null;
+                    if (GetProp<object>(board, "OutFiders") is IEnumerable outs)
+                        foreach (var f in outs) { refFider = f; break; }
+                    if (refFider == null)
+                        return new { success = false, error = "У щита нет отходящих фидеров — не с чего копировать параметры" };
+
+                    // Конструируем DbElFiderKitItem
+                    var kitType = FindType("Nanosoft.ObjectLib.ESN.Db.DbImpl.DbElFiderKitItem");
+                    if (kitType == null)
+                        return new { success = false, error = "Тип DbElFiderKitItem не найден" };
+                    var kit = Activator.CreateInstance(kitType)!;
+
+                    var copied = new List<string>();
+                    foreach (var (dst, srcName) in new[]
+                        { ("FiderType", "FiderType"), ("PoleCount", "PhaseCount"), ("FiderFilling", "FiderFilling") })
+                    {
+                        if (CopyEnumValue(kit, dst, refFider, srcName))
+                            copied.Add($"{dst} <= {srcName}");
+                    }
+                    SetPropValue(kit, "Text", "MCP-TEST");
+
+                    // Db-автомат эталонного фидера
+                    var refAutomat = GetProp<object>(refFider, "SafeAutomat");
+                    var refDbAutomat = refAutomat != null ? GetProp<object>(refAutomat, "Db") : null;
+                    if (refDbAutomat != null)
+                    {
+                        SetPropValue(kit, "SafeAutomat", refDbAutomat);
+                        copied.Add("SafeAutomat <= refFider.SafeAutomat.Db");
+                    }
+
+                    // Создание фидера через штатный компонент Электро
+                    var container = GetContainer(out var cerr);
+                    if (container == null) return new { success = false, error = cerr };
+                    var craetorType = FindType("Nanosoft.Electrica.IDbElFiderCraetor");
+                    var craetor = ResolveInternal(container, craetorType!);
+                    if (craetor == null)
+                        return new { success = false, error = "IDbElFiderCraetor не резолвится из контейнера" };
+
+                    int before = CollectionCount(GetProp<object>(board, "OutFiders"));
+                    object? newFider;
+                    try
+                    {
+                        newFider = craetor.GetType().GetMethod("CreateNewFider")!
+                            .Invoke(craetor, new[] { kit, board });
+                    }
+                    catch (Exception ex)
+                    {
+                        return new
+                        {
+                            success = false,
+                            error = "CreateNewFider: " + (ex.InnerException?.Message ?? ex.Message),
+                            copied
+                        };
+                    }
+                    int after = CollectionCount(GetProp<object>(board, "OutFiders"));
+
+                    // Сохранение в базу документа
+                    var paperId = ExtractPaperId(boardAcId);
+                    string saveMsg;
+                    try
+                    {
+                        net.GetType().GetMethod("SaveObject")!.Invoke(net, new object?[] { board, true, paperId });
+                        saveMsg = $"SaveObject(board, deepSave=true, paperId={paperId}) выполнен";
+                    }
+                    catch (Exception ex)
+                    {
+                        saveMsg = "SaveObject: " + (ex.InnerException?.Message ?? ex.Message);
+                    }
+
+                    return new
+                    {
+                        success = true,
+                        copied,
+                        out_fiders_before = before,
+                        out_fiders_after = after,
+                        create_returned = newFider?.GetType().FullName ?? "void/null",
+                        save = saveMsg,
+                        note = "Проверьте в nanoCAD панель «Сеть проекта»/щит РУ — должна появиться новая группа"
+                    };
+                }
+                catch (Exception ex)
+                {
+                    return new { success = false, error = ex.Message, inner = ex.InnerException?.Message };
+                }
+            });
         }
 
-        private static object? SafeVal(object? v, int depth)
+        // ── Утилиты создания ────────────────────────────────
+
+        private static object? FindNodeByAcId(object net, string acId)
         {
-            if (v == null) return null;
-            var t = v.GetType();
-            if (t.IsPrimitive || v is string || v is decimal) return v;
-            if (t.FullName == "Nanosoft.Acad.GlobalId") return v.ToString();
-            if (v is Enum) return $"{v} ({Convert.ToInt64(v)})";
-            if (v is IDictionary dict) return $"[dict count={dict.Count}]";
-            if (v is ICollection col) return $"[{t.Name} count={col.Count}]";
-            if (v is IEnumerable) return $"[{t.Name}]";
-            var title = GetProp<string>(v, "TitleName");
-            if (title != null) return $"[{t.Name}] {title}";
-            if (depth < 1 && (t.FullName ?? "").StartsWith("Nanosoft"))
-                return DumpNodeDeep(v, depth + 1);
-            return $"[{t.Name}] {v}";
+            if (net.GetType().GetProperty("Nodes")?.GetValue(net) is IEnumerable nodes)
+                foreach (var node in nodes)
+                {
+                    if (node == null) continue;
+                    if (GetProp<object>(node, "AcId")?.ToString() == acId)
+                        return node;
+                }
+            return null;
+        }
+
+        private static bool CopyEnumValue(object dst, string dstProp, object src, string srcProp)
+        {
+            try
+            {
+                var sv = src.GetType().GetProperty(srcProp)?.GetValue(src);
+                if (sv is not Enum) return false;
+                var dp = dst.GetType().GetProperty(dstProp);
+                if (dp == null || !dp.CanWrite) return false;
+                var converted = Enum.ToObject(dp.PropertyType, Convert.ToInt64(sv));
+                dp.SetValue(dst, converted);
+                return true;
+            }
+            catch { return false; }
+        }
+
+        private static void SetPropValue(object obj, string name, object? value)
+        {
+            try
+            {
+                var p = obj.GetType().GetProperty(name);
+                if (p == null || !p.CanWrite || value == null) return;
+                if (!p.PropertyType.IsInstanceOfType(value) && p.PropertyType != value.GetType()) return;
+                p.SetValue(obj, value);
+            }
+            catch { }
+        }
+
+        private static int ExtractPaperId(string acId)
+        {
+            try { return int.Parse(acId.Split(':')[0]); }
+            catch { return 0; }
         }
 
         // ── Доступ к контейнеру ─────────────────────────────
@@ -521,5 +627,45 @@ namespace CadEngine.Services
             ac_id = GetProp<object>(node, "AcId")?.ToString(),
             type = node.GetType().FullName
         };
+
+        private static object DumpNodeDeep(object node, int depth)
+        {
+            var t = node.GetType();
+            var values = new Dictionary<string, object?>();
+            foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (p.GetIndexParameters().Length > 0 || !p.CanRead) continue;
+                object? v;
+                try { v = p.GetValue(node); }
+                catch (Exception ex) { values[p.Name] = $"<err: {ex.Message}>"; continue; }
+                values[p.Name] = SafeVal(v, depth);
+            }
+            return new Dictionary<string, object?>
+            {
+                ["success"] = true,
+                ["type"] = t.FullName,
+                ["title"] = GetProp<string>(node, "TitleName"),
+                ["ac_id"] = GetProp<object>(node, "AcId")?.ToString(),
+                ["properties_count"] = values.Count,
+                ["properties"] = values
+            };
+        }
+
+        private static object? SafeVal(object? v, int depth)
+        {
+            if (v == null) return null;
+            var t = v.GetType();
+            if (t.IsPrimitive || v is string || v is decimal) return v;
+            if (t.FullName == "Nanosoft.Acad.GlobalId") return v.ToString();
+            if (v is Enum) return $"{v} ({Convert.ToInt64(v)})";
+            if (v is IDictionary dict) return $"[dict count={dict.Count}]";
+            if (v is ICollection col) return $"[{t.Name} count={col.Count}]";
+            if (v is IEnumerable) return $"[{t.Name}]";
+            var title = GetProp<string>(v, "TitleName");
+            if (title != null) return $"[{t.Name}] {title}";
+            if (depth < 1 && (t.FullName ?? "").StartsWith("Nanosoft"))
+                return DumpNodeDeep(v, depth + 1);
+            return $"[{t.Name}] {v}";
+        }
     }
 }
