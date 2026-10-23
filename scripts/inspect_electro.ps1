@@ -1,7 +1,7 @@
 # inspect_electro.ps1
-# Разведка API nanoCAD BIM Электро 26 через ElectroInspectService.
-# Запуск: powershell -ExecutionPolicy Bypass -File scripts\inspect_electro.ps1
-# Результат: inspect_results.txt в корне репозитория — прислать целиком.
+# Reconnaissance of nanoCAD BIM Electro 26 API via ElectroInspectService.
+# Run: powershell -ExecutionPolicy Bypass -File scripts\inspect_electro.ps1
+# Output: inspect_results.txt in repo root - send it back entirely.
 
 $out = Join-Path (Split-Path $PSScriptRoot -Parent) "inspect_results.txt"
 $base = "http://localhost:5080/api/electro"
@@ -17,20 +17,20 @@ function Dump($title, $url) {
     }
 }
 
-# 1. Какие сборки Nanosoft реально загружены в процесс
+# 1. Which Nanosoft assemblies are actually loaded in the process
 Dump "Assemblies Nanosoft" "$base/assemblies/Nanosoft"
 
-# 2. Полный список типов ключевых сборок (ищем IAcadObject, создатели, сервисы)
+# 2. Full type lists of key assemblies (looking for IAcadObject, creators, services)
 Dump "Types Nanosoft.ObjectLib.ESN" "$base/types/Nanosoft.ObjectLib.ESN"
 Dump "Types Nanosoft.CAE.Model"   "$base/types/Nanosoft.CAE.Model"
 Dump "Types Nanosoft.CAE.Project" "$base/types/Nanosoft.CAE.Project"
 Dump "Types Nanosoft.CAE.Db"      "$base/types/Nanosoft.CAE.Db"
 
-# 3. DI-карта проектного слоя
+# 3. DI map of the project layer
 Dump "Components Nanosoft.CAE.Project" "$base/components/Nanosoft.CAE.Project"
 Dump "Components Nanosoft.CAE.Model"   "$base/components/Nanosoft.CAE.Model"
 
-# 4. Сигнатуры конкретных типов
+# 4. Signatures of specific types
 $types = @(
     "Nanosoft.Electrica.DbElFiderCraetor",
     "Nanosoft.Electrica.SwitchCreator",
@@ -51,4 +51,4 @@ $types = @(
 foreach ($t in $types) { Dump "Type $t" "$base/type/$t" }
 
 "DONE" | Out-File $out -Append -Encoding utf8
-Write-Host "Готово. Файл с результатами: $out"
+Write-Host "Done. Results file: $out"
