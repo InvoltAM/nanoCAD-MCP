@@ -33,7 +33,7 @@ if ($boards -and $boards.nodes.Count -gt 0) {
     Dump "Dump first ElBoard" "$base/node/$($boards.nodes[0].ac_id)"
 }
 
-$sockets = Dump "Nodes ElSocket" "$base/nodes/ElSocket`
+$sockets = Dump "Nodes ElSocket" "$base/nodes/ElSocket"
 if ($sockets -and $sockets.nodes.Count -gt 0) {
     Dump "Dump first ElSocket" "$base/node/$($sockets.nodes[0].ac_id)"
 }

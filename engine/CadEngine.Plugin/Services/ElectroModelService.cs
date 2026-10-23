@@ -188,6 +188,115 @@ namespace CadEngine.Services
             });
         }
 
+        /// <summary>Узлы модели по фильтру имени типа (подстрока; "all" — все).</summary>
+        public object ListNodes(string typeFilter)
+        {
+            return MainThreadExecutor.Execute(() =>
+            {
+                try
+                {
+                    var net = GetNet(out var err);
+                    if (net == null) return new { success = false, error = err };
+
+                    var list = new List<object>();
+                    if (net.GetType().GetProperty("Nodes")?.GetValue(net) is IEnumerable nodes)
+                    {
+                        foreach (var node in nodes)
+                        {
+                            if (node == null) continue;
+                            var tn = node.GetType().FullName ?? "?";
+                            if (!string.IsNullOrEmpty(typeFilter) && typeFilter != "all"
+                                && !tn.Contains(typeFilter, StringComparison.OrdinalIgnoreCase)) continue;
+                            list.Add(DescribeNode(node));
+                            if (list.Count >= 500) break;
+                        }
+                    }
+                    return new { success = true, count = list.Count, nodes = list };
+                }
+                catch (Exception ex)
+                {
+                    return new { success = false, error = ex.Message };
+                }
+            });
+        }
+
+        /// <summary>
+        /// Полный дамп значений свойств узла модели по AcId
+        /// (enum — с числовым значением, вложенные Db-объекты — рекурсивно).
+        /// Ключевой инструмент перед созданием объектов: показывает фактические
+        /// значения, которые Электро хранит в реальных узлах.
+        /// </summary>
+        public object DumpNode(string acId)
+        {
+            return MainThreadExecutor.Execute(() =>
+            {
+                try
+                {
+                    var net = GetNet(out var err);
+                    if (net == null) return new { success = false, error = err };
+
+                    object? target = null;
+                    if (net.GetType().GetProperty("Nodes")?.GetValue(net) is IEnumerable nodes)
+                    {
+                        foreach (var node in nodes)
+                        {
+                            if (node == null) continue;
+                            var id = GetProp<object>(node, "AcId")?.ToString();
+                            if (id == acId) { target = node; break; }
+                        }
+                    }
+                    if (target == null)
+                        return new { success = false, error = $"Узел с AcId {acId} не найден" };
+
+                    return DumpNodeDeep(target, 0);
+                }
+                catch (Exception ex)
+                {
+                    return new { success = false, error = ex.Message, inner = ex.InnerException?.Message };
+                }
+            });
+        }
+
+        private static object DumpNodeDeep(object node, int depth)
+        {
+            var t = node.GetType();
+            var values = new Dictionary<string, object?>();
+            foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (p.GetIndexParameters().Length > 0 || !p.CanRead) continue;
+                object? v;
+                try { v = p.GetValue(node); }
+                catch (Exception ex) { values[p.Name] = $"<err: {ex.Message}>"; continue; }
+                values[p.Name] = SafeVal(v, depth);
+            }
+            return new Dictionary<string, object?>
+            {
+                ["success"] = true,
+                ["type"] = t.FullName,
+                ["title"] = GetProp<string>(node, "TitleName"),
+                ["ac_id"] = GetProp<object>(node, "AcId")?.ToString(),
+                ["properties_count"] = values.Count,
+                ["properties"] = values
+            };
+        }
+
+        private static object? SafeVal(object? v, int depth)
+        {
+            if (v == null) return null;
+            var t = v.GetType();
+            if (t.IsPrimitive || v is string || v is decimal) return v;
+            if (t.FullName == "Nanosoft.Acad.GlobalId") return v.ToString();
+            if (v is Enum) return $"{v} ({Convert.ToInt64(v)})";
+            if (v is IDictionary dict) return $"[dict count={dict.Count}]";
+            if (v is ICollection col) return $"[{t.Name} count={col.Count}]";
+            if (v is IEnumerable) return $"[{t.Name}]";
+            var title = GetProp<string>(v, "TitleName");
+            if (title != null) return $"[{t.Name}] {title}";
+            if (depth < 1 && (t.FullName ?? "").StartsWith("Nanosoft"))
+                return DumpNodeDeep(v, depth + 1);
+            return $"[{t.Name}] {v}";
+        }
+
         // ── Доступ к контейнеру ─────────────────────────────
 
         private object? GetContainer(out string? error)
