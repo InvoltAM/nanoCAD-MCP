@@ -1,0 +1,37 @@
+diff --git a/engine/CadEngine.Plugin/HttpServer.cs b/engine/CadEngine.Plugin/HttpServer.cs
+index 12127ab..57d39ea 100644
+--- a/engine/CadEngine.Plugin/HttpServer.cs
++++ b/engine/CadEngine.Plugin/HttpServer.cs
+@@ -35,6 +35,7 @@ namespace CadEngine
+         private readonly SelectionService _selectionService;
+         private readonly SheetMetalService _sheetMetalService;
+         private readonly FeatureService _featureService;
++        private readonly ElectroObjectService _electroObjectService;
+ 
+         private static readonly JsonSerializerOptions JsonOptions = new()
+         {
+@@ -62,6 +63,7 @@ namespace CadEngine
+             _selectionService = new SelectionService();
+             _sheetMetalService = new SheetMetalService();
+             _featureService = new FeatureService();
++            _electroObjectService = new ElectroObjectService();
+             _multiCadService = new MultiCadService();
+         }
+ 
+@@ -174,6 +176,16 @@ namespace CadEngine
+             if (method == "GET" && path == "/api/system/health")
+                 return _systemService.GetHealth();
+ 
++            // Electro (BIM Электро)
++            if (method == "GET" && path == "/api/electro/objects")
++                return _electroObjectService.ListElectroObjects();
++
++            if (method == "GET" && TryMatch(path, "/api/electro/object/{handle}", out var electroHandle))
++                return _electroObjectService.DumpObject(electroHandle!);
++
++            if (method == "GET" && path == "/api/electro/selection/dump")
++                return _electroObjectService.DumpSelection();
++
+             // System
+             if (method == "GET" && path == "/api/system/info")
+                 return _systemService.GetInfo();
