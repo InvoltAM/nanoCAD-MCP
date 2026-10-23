@@ -1,1 +1,40 @@
-PLACEHOLDER_PATCH
+diff --git a/engine/CadEngine.Plugin/HttpServer.cs b/engine/CadEngine.Plugin/HttpServer.cs
+index 8534465..6077852 100644
+--- a/engine/CadEngine.Plugin/HttpServer.cs
++++ b/engine/CadEngine.Plugin/HttpServer.cs
+@@ -37,6 +37,7 @@ namespace CadEngine
+         private readonly FeatureService _featureService;
+         private readonly ElectroObjectService _electroObjectService;
+         private readonly ElectroInspectService _electroInspectService;
++        private readonly ElectroModelService _electroModelService;
+ 
+         private static readonly JsonSerializerOptions JsonOptions = new()
+         {
+@@ -66,6 +67,7 @@ namespace CadEngine
+             _featureService = new FeatureService();
+             _electroObjectService = new ElectroObjectService();
+             _electroInspectService = new ElectroInspectService();
++            _electroModelService = new ElectroModelService();
+             _multiCadService = new MultiCadService();
+         }
+ 
+@@ -201,6 +203,19 @@ namespace CadEngine
+             if (method == "GET" && TryMatch(path, "/api/electro/type/{name}", out var typeName))
+                 return _electroInspectService.DumpType(typeName!);
+ 
++            // Electro Model (CAE-модель: DI-контейнер, сеть модели, щиты)
++            if (method == "GET" && path == "/api/electro/model/discover")
++                return _electroModelService.DiscoverAccessors();
++
++            if (method == "GET" && TryMatch(path, "/api/electro/model/resolve/{type}", out var resolveType))
++                return _electroModelService.ResolveComponent(resolveType!);
++
++            if (method == "GET" && path == "/api/electro/model/net")
++                return _electroModelService.GetNetInfo();
++
++            if (method == "GET" && path == "/api/electro/model/boards")
++                return _electroModelService.ListBoards();
++
+             // System
+             if (method == "GET" && path == "/api/system/info")
+                 return _systemService.GetInfo();
