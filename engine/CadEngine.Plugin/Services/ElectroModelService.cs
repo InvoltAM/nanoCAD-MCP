@@ -8,7 +8,8 @@ namespace CadEngine.Services
 {
     /// <summary>
     /// Доступ к CAE-модели nanoCAD BIM Электро: DI-контейнер (Nanosoft.Platform),
-    /// сеть модели (IAcadNet) и её узлы (щиты, фидеры, потребители).
+    /// сеть модели (IAcadNet) и её узлы (щиты, фидеры, потребители),
+    /// каталог БД оборудования и создание групп.
     /// Работает полностью через рефлексию — без compile-time ссылок на сборки Электро;
     /// сигнатуры типов добыты рантайм-разведкой (ElectroInspectService).
     /// </summary>
@@ -223,8 +224,6 @@ namespace CadEngine.Services
         /// <summary>
         /// Полный дамп значений свойств узла модели по AcId
         /// (enum — с числовым значением, вложенные Db-объекты — рекурсивно).
-        /// Ключевой инструмент перед созданием объектов: показывает фактические
-        /// значения, которые Электро хранит в реальных узлах.
         /// </summary>
         public object DumpNode(string acId)
         {
@@ -354,6 +353,248 @@ namespace CadEngine.Services
                     return new { success = false, error = ex.Message, inner = ex.InnerException?.Message };
                 }
             });
+        }
+
+        /// <summary>
+        /// Каталог автоматических выключателей из активной БД оборудования.
+        /// Фильтры: nominal (номинальный ток, А; 0 — все), poles (число полюсов; 0 — все).
+        /// </summary>
+        public object ListDbAutomats(double nominal, int poles)
+        {
+            return MainThreadExecutor.Execute(() =>
+            {
+                try
+                {
+                    var (proxy, perr) = GetDbProxy();
+                    if (proxy == null) return new { success = false, error = perr };
+
+                    var automatType = FindType("Nanosoft.ObjectLib.ESN.Db.DbImpl.DbElAutomat")!;
+                    var items = LoadDbTable(proxy, automatType, out var lerr);
+                    if (items == null) return new { success = false, error = lerr };
+
+                    var list = new List<object>();
+                    foreach (var it in items)
+                    {
+                        if (it == null) continue;
+                        double nom = GetProp<double>(it, "NominalCur");
+                        string poleStr = GetProp<object>(it, "DbPoleCount")?.ToString() ?? "";
+                        if (nominal > 0 && Math.Abs(nom - nominal) > 0.01) continue;
+                        if (poles > 0 && !poleStr.Contains($"_{poles}P") && !poleStr.Contains(poles.ToString())) continue;
+                        list.Add(new
+                        {
+                            db_id = GetProp<int>(it, "DbId"),
+                            name = GetProp<string>(it, "DbName"),
+                            series = GetProp<string>(it, "DbSeries"),
+                            nominal_cur = nom,
+                            poles = poleStr,
+                            characteristic = GetProp<string>(it, "AutomatCharReleaseType"),
+                            current_scale = GetProp<string>(it, "CurrentScale"),
+                            max_commutation = GetProp<double>(it, "MaxCommutation"),
+                            category = GetProp<string>(it, "Category")
+                        });
+                    }
+                    return new { success = true, count = list.Count, automats = list };
+                }
+                catch (Exception ex)
+                {
+                    return new { success = false, error = ex.Message, inner = ex.InnerException?.Message };
+                }
+            });
+        }
+
+        /// <summary>Каталог УЗО из активной БД оборудования.</summary>
+        public object ListDbUzo()
+        {
+            return MainThreadExecutor.Execute(() =>
+            {
+                try
+                {
+                    var (proxy, perr) = GetDbProxy();
+                    if (proxy == null) return new { success = false, error = perr };
+
+                    var uzoType = FindType("Nanosoft.ObjectLib.ESN.Db.DbImpl.DbElUzo")!;
+                    var items = LoadDbTable(proxy, uzoType, out var lerr);
+                    if (items == null) return new { success = false, error = lerr };
+
+                    var list = new List<object>();
+                    foreach (var it in items)
+                    {
+                        if (it == null) continue;
+                        list.Add(new
+                        {
+                            db_id = GetProp<int>(it, "DbId"),
+                            name = GetProp<string>(it, "DbName"),
+                            nominal_cur = GetProp<double>(it, "DbNominalCur"),
+                            poles = GetProp<object>(it, "DbPoleCount")?.ToString(),
+                            uzo_current_scale = GetProp<string>(it, "CurrentScaleUzo"),
+                            category = GetProp<string>(it, "Category")
+                        });
+                    }
+                    return new { success = true, count = list.Count, uzo = list };
+                }
+                catch (Exception ex)
+                {
+                    return new { success = false, error = ex.Message, inner = ex.InnerException?.Message };
+                }
+            });
+        }
+
+        /// <summary>
+        /// Полноценное создание группы: щит + имя + автомат из БД (db_id) + опционально УЗО.
+        /// </summary>
+        public object CreateGroup(string boardAcId, string name, int automatDbId, int uzoDbId)
+        {
+            return MainThreadExecutor.Execute(() =>
+            {
+                try
+                {
+                    var net = GetNet(out var err);
+                    if (net == null) return new { success = false, error = err };
+
+                    var board = FindNodeByAcId(net, boardAcId);
+                    if (board == null)
+                        return new { success = false, error = $"Щит {boardAcId} не найден в модели" };
+                    if (board.GetType().FullName != BoardTypeName)
+                        return new { success = false, error = $"Узел {boardAcId} не ElBoard" };
+
+                    // Эталонный отходящий фидер (для FiderType / PhaseCount / FiderFilling)
+                    object? refFider = null;
+                    if (GetProp<object>(board, "OutFiders") is IEnumerable outs)
+                        foreach (var f in outs) { refFider = f; break; }
+                    if (refFider == null)
+                        return new { success = false, error = "У щита нет отходящих фидеров — не с чего копировать параметры" };
+
+                    var (proxy, perr) = GetDbProxy();
+                    if (proxy == null) return new { success = false, error = perr };
+
+                    // Автомат из БД
+                    var automatType = FindType("Nanosoft.ObjectLib.ESN.Db.DbImpl.DbElAutomat")!;
+                    object? dbAutomat = null;
+                    if (automatDbId > 0)
+                    {
+                        dbAutomat = proxy.GetType().GetMethod("SelectDbObject", new[] { typeof(Type), typeof(int) })
+                            ?.Invoke(proxy, new object[] { automatType, automatDbId });
+                        if (dbAutomat == null)
+                            return new { success = false, error = $"Автомат с DbId={automatDbId} не найден в БД" };
+                    }
+
+                    // УЗО из БД (опционально)
+                    object? dbUzo = null;
+                    if (uzoDbId > 0)
+                    {
+                        var uzoType = FindType("Nanosoft.ObjectLib.ESN.Db.DbImpl.DbElUzo")!;
+                        dbUzo = proxy.GetType().GetMethod("SelectDbObject", new[] { typeof(Type), typeof(int) })
+                            ?.Invoke(proxy, new object[] { uzoType, uzoDbId });
+                        if (dbUzo == null)
+                            return new { success = false, error = $"УЗО с DbId={uzoDbId} не найдено в БД" };
+                    }
+
+                    // Kit item
+                    var kitType = FindType("Nanosoft.ObjectLib.ESN.Db.DbImpl.DbElFiderKitItem")!;
+                    var kit = Activator.CreateInstance(kitType)!;
+
+                    var copied = new List<string>();
+                    foreach (var (dst, srcName) in new[]
+                        { ("FiderType", "FiderType"), ("PoleCount", "PhaseCount"), ("FiderFilling", "FiderFilling") })
+                        if (CopyEnumValue(kit, dst, refFider, srcName))
+                            copied.Add(dst);
+
+                    SetPropValue(kit, "Text", string.IsNullOrWhiteSpace(name) ? "MCP" : name);
+                    if (dbAutomat != null) { SetPropValue(kit, "SafeAutomat", dbAutomat); copied.Add("SafeAutomat<=БД"); }
+                    else
+                    {
+                        var refAutomat = GetProp<object>(refFider, "SafeAutomat");
+                        var refDb = refAutomat != null ? GetProp<object>(refAutomat, "Db") : null;
+                        if (refDb != null) { SetPropValue(kit, "SafeAutomat", refDb); copied.Add("SafeAutomat<=эталон"); }
+                    }
+                    if (dbUzo != null) { SetPropValue(kit, "Uzo", dbUzo); copied.Add("Uzo<=БД"); }
+
+                    // Создание
+                    var container = GetContainer(out var cerr);
+                    if (container == null) return new { success = false, error = cerr };
+                    var craetor = ResolveInternal(container, FindType("Nanosoft.Electrica.IDbElFiderCraetor")!);
+                    if (craetor == null)
+                        return new { success = false, error = "IDbElFiderCraetor не резолвится" };
+
+                    int before = CollectionCount(GetProp<object>(board, "OutFiders"));
+                    object? newFider;
+                    try
+                    {
+                        newFider = craetor.GetType().GetMethod("CreateNewFider")!
+                            .Invoke(craetor, new[] { kit, board });
+                    }
+                    catch (Exception ex)
+                    {
+                        return new { success = false, error = "CreateNewFider: " + (ex.InnerException?.Message ?? ex.Message), copied };
+                    }
+                    int after = CollectionCount(GetProp<object>(board, "OutFiders"));
+
+                    var paperId = ExtractPaperId(boardAcId);
+                    string saveMsg;
+                    try
+                    {
+                        net.GetType().GetMethod("SaveObject")!.Invoke(net, new object?[] { board, true, paperId });
+                        saveMsg = $"SaveObject OK (paperId={paperId})";
+                    }
+                    catch (Exception ex)
+                    {
+                        saveMsg = "SaveObject: " + (ex.InnerException?.Message ?? ex.Message);
+                    }
+
+                    return new
+                    {
+                        success = true,
+                        group_name = name,
+                        automat_db_id = automatDbId,
+                        uzo_db_id = uzoDbId,
+                        copied,
+                        out_fiders_before = before,
+                        out_fiders_after = after,
+                        create_returned = newFider?.GetType().FullName ?? "void/null",
+                        save = saveMsg
+                    };
+                }
+                catch (Exception ex)
+                {
+                    return new { success = false, error = ex.Message, inner = ex.InnerException?.Message };
+                }
+            });
+        }
+
+        // ── Доступ к БД оборудования ────────────────────────
+
+        private (object? proxy, string? error) GetDbProxy()
+        {
+            var container = GetContainer(out var cerr);
+            if (container == null) return (null, cerr);
+            var proxyType = FindType("Nanosoft.CAE.Db.DatabaseProxyComponent.IDatabaseProxyComponent");
+            if (proxyType == null) return (null, "Тип IDatabaseProxyComponent не найден");
+            object? proxy = null;
+            try { proxy = ResolveInternal(container, proxyType); } catch (Exception ex) { return (null, ex.InnerException?.Message ?? ex.Message); }
+            if (proxy == null) return (null, "IDatabaseProxyComponent не зарегистрирован в контейнере");
+            return (proxy, null);
+        }
+
+        private static IEnumerable<object?>? LoadDbTable(object proxy, Type tableType, out string? error)
+        {
+            error = null;
+            try
+            {
+                var db = proxy.GetType().GetMethod("GetDb")!.Invoke(proxy, new object[] { tableType });
+                if (db == null) { error = "GetDb вернул null (нет активной БД оборудования?)"; return null; }
+                var load = db.GetType().GetMethods()
+                    .FirstOrDefault(m => m.Name == "LoadTypedSource" && m.IsGenericMethodDefinition && m.GetParameters().Length == 0);
+                if (load == null) { error = "LoadTypedSource<T>() не найден у IDataSource"; return null; }
+                var arr = load.MakeGenericMethod(tableType).Invoke(db, null);
+                if (arr is IEnumerable en) return en.Cast<object?>();
+                error = "LoadTypedSource вернул не-коллекцию";
+                return null;
+            }
+            catch (Exception ex)
+            {
+                error = ex.InnerException?.Message ?? ex.Message;
+                return null;
+            }
         }
 
         // ── Утилиты создания ────────────────────────────────
