@@ -1,0 +1,37 @@
+diff --git a/engine/CadEngine.Plugin/HttpServer.cs b/engine/CadEngine.Plugin/HttpServer.cs
+index 125b33d..f4f25a9 100644
+--- a/engine/CadEngine.Plugin/HttpServer.cs
++++ b/engine/CadEngine.Plugin/HttpServer.cs
+@@ -225,6 +225,32 @@ namespace CadEngine
+             if (method == "GET" && TryMatch(path, "/api/electro/model/group/create/{acid}", out var groupBoardAcid))
+                 return _electroModelService.CreateTestGroup(groupBoardAcid!);
+ 
++            // Electro DB (каталог оборудования) + создание группы с параметрами
++            if (method == "GET" && path == "/api/electro/db/automats")
++            {
++                var nom = ParseQueryParam(request, "nominal");
++                var pol = ParseQueryParam(request, "poles");
++                return _electroModelService.ListDbAutomats(
++                    double.TryParse(nom, out var nv) ? nv : 0,
++                    int.TryParse(pol, out var pv) ? pv : 0);
++            }
++
++            if (method == "GET" && path == "/api/electro/db/uzo")
++                return _electroModelService.ListDbUzo();
++
++            if (method == "GET" && path == "/api/electro/model/group/create2")
++            {
++                var board = ParseQueryParam(request, "board");
++                var gname = ParseQueryParam(request, "name") ?? "MCP";
++                var aut = ParseQueryParam(request, "automat");
++                var uzo = ParseQueryParam(request, "uzo");
++                return !string.IsNullOrEmpty(board)
++                    ? _electroModelService.CreateGroup(board, gname,
++                        int.TryParse(aut, out var av) ? av : 0,
++                        int.TryParse(uzo, out var uv) ? uv : 0)
++                    : BadRequest();
++            }
++
+             // System
+             if (method == "GET" && path == "/api/system/info")
+                 return _systemService.GetInfo();
