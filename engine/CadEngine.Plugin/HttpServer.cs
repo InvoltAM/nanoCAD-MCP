@@ -35,6 +35,9 @@ namespace CadEngine
         private readonly SelectionService _selectionService;
         private readonly SheetMetalService _sheetMetalService;
         private readonly FeatureService _featureService;
+        private readonly ElectroObjectService _electroObjectService;
+        private readonly ElectroInspectService _electroInspectService;
+        private readonly ElectroModelService _electroModelService;
 
         private static readonly JsonSerializerOptions JsonOptions = new()
         {
@@ -62,6 +65,9 @@ namespace CadEngine
             _selectionService = new SelectionService();
             _sheetMetalService = new SheetMetalService();
             _featureService = new FeatureService();
+            _electroObjectService = new ElectroObjectService();
+            _electroInspectService = new ElectroInspectService();
+            _electroModelService = new ElectroModelService();
             _multiCadService = new MultiCadService();
         }
 
@@ -173,6 +179,77 @@ namespace CadEngine
             // Health
             if (method == "GET" && path == "/api/system/health")
                 return _systemService.GetHealth();
+
+            // Electro (BIM Электро)
+            if (method == "GET" && path == "/api/electro/objects")
+                return _electroObjectService.ListElectroObjects();
+
+            if (method == "GET" && TryMatch(path, "/api/electro/object/{handle}", out var electroHandle))
+                return _electroObjectService.DumpObject(electroHandle!);
+
+            if (method == "GET" && path == "/api/electro/selection/dump")
+                return _electroObjectService.DumpSelection();
+
+            // Electro Inspect (рефлексия по сборкам в процессе nanoCAD)
+            if (method == "GET" && TryMatch(path, "/api/electro/assemblies/{filter}", out var asmFilter))
+                return _electroInspectService.ListAssemblies(asmFilter!);
+
+            if (method == "GET" && TryMatch(path, "/api/electro/types/{assembly}", out var asmName))
+                return _electroInspectService.ListTypes(asmName!);
+
+            if (method == "GET" && TryMatch(path, "/api/electro/components/{assembly}", out var compAsm))
+                return _electroInspectService.ListComponents(compAsm!);
+
+            if (method == "GET" && TryMatch(path, "/api/electro/type/{name}", out var typeName))
+                return _electroInspectService.DumpType(typeName!);
+
+            // Electro Model (CAE-модель: DI-контейнер, сеть модели, щиты)
+            if (method == "GET" && path == "/api/electro/model/discover")
+                return _electroModelService.DiscoverAccessors();
+
+            if (method == "GET" && TryMatch(path, "/api/electro/model/resolve/{type}", out var resolveType))
+                return _electroModelService.ResolveComponent(resolveType!);
+
+            if (method == "GET" && path == "/api/electro/model/net")
+                return _electroModelService.GetNetInfo();
+
+            if (method == "GET" && path == "/api/electro/model/boards")
+                return _electroModelService.ListBoards();
+
+            if (method == "GET" && TryMatch(path, "/api/electro/model/nodes/{type}", out var nodesType))
+                return _electroModelService.ListNodes(nodesType!);
+
+            if (method == "GET" && TryMatch(path, "/api/electro/model/node/{acid}", out var nodeAcid))
+                return _electroModelService.DumpNode(nodeAcid!);
+
+            if (method == "GET" && TryMatch(path, "/api/electro/model/group/create/{acid}", out var groupBoardAcid))
+                return _electroModelService.CreateTestGroup(groupBoardAcid!);
+
+            // Electro DB (каталог оборудования) + создание группы с параметрами
+            if (method == "GET" && path == "/api/electro/db/automats")
+            {
+                var nom = ParseQueryParam(request, "nominal");
+                var pol = ParseQueryParam(request, "poles");
+                return _electroModelService.ListDbAutomats(
+                    double.TryParse(nom, out var nv) ? nv : 0,
+                    int.TryParse(pol, out var pv) ? pv : 0);
+            }
+
+            if (method == "GET" && path == "/api/electro/db/uzo")
+                return _electroModelService.ListDbUzo();
+
+            if (method == "GET" && path == "/api/electro/model/group/create2")
+            {
+                var board = ParseQueryParam(request, "board");
+                var gname = ParseQueryParam(request, "name") ?? "MCP";
+                var aut = ParseQueryParam(request, "automat");
+                var uzo = ParseQueryParam(request, "uzo");
+                return !string.IsNullOrEmpty(board)
+                    ? _electroModelService.CreateGroup(board, gname,
+                        int.TryParse(aut, out var av) ? av : 0,
+                        int.TryParse(uzo, out var uv) ? uv : 0)
+                    : BadRequest();
+            }
 
             // System
             if (method == "GET" && path == "/api/system/info")

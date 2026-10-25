@@ -1,0 +1,109 @@
+diff --git a/engine/CadEngine.Plugin/Services/ElectroModelService.cs b/engine/CadEngine.Plugin/Services/ElectroModelService.cs
+index f95b102..5acbba9 100644
+--- a/engine/CadEngine.Plugin/Services/ElectroModelService.cs
++++ b/engine/CadEngine.Plugin/Services/ElectroModelService.cs
+@@ -516,25 +516,86 @@ namespace CadEngine.Services
+                     if (craetor == null)
+                         return new { success = false, error = "IDbElFiderCraetor не резолвится" };
+ 
+-                    int before = CollectionCount(GetProp<object>(board, "OutFiders"));
+-                    object? newFider;
++                    // Снимок AcId существующих фидеров — чтобы найти новый
++                    var beforeIds = new HashSet<string>();
++                    if (GetProp<object>(board, "OutFiders") is IEnumerable beforeOuts)
++                        foreach (var f in beforeOuts)
++                        {
++                            var bid = GetProp<object>(f, "AcId")?.ToString();
++                            if (bid != null) beforeIds.Add(bid);
++                        }
++                    int before = beforeIds.Count;
++
++                    string createMsg;
+                     try
+                     {
+-                        newFider = craetor.GetType().GetMethod("CreateNewFider")!
+-                            .Invoke(craetor, new[] { kit, board });
++                        craetor.GetType().GetMethod("CreateNewFider")!.Invoke(craetor, new[] { kit, board });
++                        createMsg = "CreateNewFider OK";
+                     }
+                     catch (Exception ex)
+                     {
+                         return new { success = false, error = "CreateNewFider: " + (ex.InnerException?.Message ?? ex.Message), copied };
+                     }
++
++                    // Новый фидер = тот, чьего AcId не было в снимке
++                    object? newFider = null;
++                    if (GetProp<object>(board, "OutFiders") is IEnumerable afterOuts)
++                        foreach (var f in afterOuts)
++                        {
++                            var aid = GetProp<object>(f, "AcId")?.ToString();
++                            if (aid != null && !beforeIds.Contains(aid)) { newFider = f; break; }
++                        }
+                     int after = CollectionCount(GetProp<object>(board, "OutFiders"));
+ 
++                    var steps = new List<string> { createMsg };
++                    if (newFider == null)
++                        steps.Add("Новый фидер не найден в OutFiders (diff по AcId пуст)");
++
++                    // Привязка аппаратов штатными методами фидера (как делает UI Электро)
++                    if (newFider != null && automatDbId > 0)
++                    {
++                        try
++                        {
++                            var m = newFider.GetType().GetMethod("AddSafeAutomat");
++                            if (m == null) steps.Add("Метод AddSafeAutomat не найден у " + newFider.GetType().Name);
++                            else { m.Invoke(newFider, new object[] { automatDbId }); steps.Add($"AddSafeAutomat({automatDbId}) OK"); }
++                        }
++                        catch (Exception ex) { steps.Add("AddSafeAutomat: " + (ex.InnerException?.Message ?? ex.Message)); }
++                    }
++                    if (newFider != null && uzoDbId > 0)
++                    {
++                        try
++                        {
++                            var m = newFider.GetType().GetMethod("AddUzo");
++                            if (m == null) steps.Add("Метод AddUzo не найден у " + newFider.GetType().Name);
++                            else { m.Invoke(newFider, new object[] { uzoDbId }); steps.Add($"AddUzo({uzoDbId}) OK"); }
++                        }
++                        catch (Exception ex) { steps.Add("AddUzo: " + (ex.InnerException?.Message ?? ex.Message)); }
++                    }
++
++                    // Имя группы — напрямую созданному фидеру
++                    if (newFider != null && !string.IsNullOrWhiteSpace(name))
++                    {
++                        try
++                        {
++                            var tp = newFider.GetType().GetProperty("TitleName");
++                            if (tp != null && tp.CanWrite && tp.PropertyType == typeof(string))
++                            {
++                                tp.SetValue(newFider, name);
++                                steps.Add("TitleName установлен: " + name);
++                            }
++                            else steps.Add("TitleName недоступен для записи (CanWrite=" + (tp?.CanWrite.ToString() ?? "свойства нет") + ")");
++                        }
++                        catch (Exception ex) { steps.Add("TitleName: " + (ex.InnerException?.Message ?? ex.Message)); }
++                    }
++
++                    // Сохранение
+                     var paperId = ExtractPaperId(boardAcId);
+                     string saveMsg;
+                     try
+                     {
+                         net.GetType().GetMethod("SaveObject")!.Invoke(net, new object?[] { board, true, paperId });
+-                        saveMsg = $"SaveObject OK (paperId={paperId})";
++                        saveMsg = $"SaveObject(board) OK (paperId={paperId})";
+                     }
+                     catch (Exception ex)
+                     {
+@@ -548,9 +609,11 @@ namespace CadEngine.Services
+                         automat_db_id = automatDbId,
+                         uzo_db_id = uzoDbId,
+                         copied,
++                        steps,
+                         out_fiders_before = before,
+                         out_fiders_after = after,
+-                        create_returned = newFider?.GetType().FullName ?? "void/null",
++                        new_fider_found = newFider != null,
++                        new_fider_ac_id = newFider != null ? GetProp<object>(newFider, "AcId")?.ToString() : null,
+                         save = saveMsg
+                     };
+                 }

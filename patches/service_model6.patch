@@ -1,0 +1,194 @@
+--- a/engine/CadEngine.Plugin/Services/ElectroModelService.cs
++++ b/engine/CadEngine.Plugin/Services/ElectroModelService.cs
+@@ -561,6 +561,191 @@
+             });
+         }
+ 
++        /// <summary>
++        /// Диагностика: все таблицы БД оборудования (типы Db* из Nanosoft.ObjectLib.ESN.Db)
++        /// с количеством записей в активной БД. Помогает найти, где лежат УЗО/дифавтоматы.
++        /// </summary>
++        public object ListDbTables()
++        {
++            return MainThreadExecutor.Execute(() =>
++            {
++                try
++                {
++                    var (proxy, perr) = GetDbProxy();
++                    if (proxy == null) return new { success = false, error = perr };
++
++                    var rows = new List<(string table, int count, string? error)>();
++                    foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
++                    {
++                        var an = asm.GetName().Name ?? "";
++                        if (!an.StartsWith("Nanosoft", StringComparison.OrdinalIgnoreCase)) continue;
++                        foreach (var t in SafeTypes(asm))
++                        {
++                            var fn = t.FullName ?? "";
++                            if (!fn.StartsWith("Nanosoft.ObjectLib.ESN.Db.DbImpl.Db")
++                                || t.IsAbstract || t.IsInterface) continue;
++                            var items = LoadDbTable(proxy, t, out var lerr);
++                            if (items == null) { rows.Add((t.Name, -1, lerr)); continue; }
++                            int cnt = 0;
++                            foreach (var _ in items) cnt++;
++                            rows.Add((t.Name, cnt, null));
++                        }
++                    }
++                    var tables = rows
++                        .OrderByDescending(r => r.count)
++                        .Select(r => r.error != null
++                            ? (object)new { table = r.table, error = r.error }
++                            : new { table = r.table, count = r.count })
++                        .ToList();
++                    return new { success = true, count = tables.Count, tables };
++                }
++                catch (Exception ex)
++                {
++                    return new { success = false, error = ex.Message, inner = ex.InnerException?.Message };
++                }
++            });
++        }
++
++        /// <summary>
++        /// Расчёт мощности щита штатным IElPowerCalculator Электро.
++        /// Аргументы метода собираются адаптивно (сигнатура добыта разведкой:
++        /// CalculatePower(net, fiders, calcObjects)); после пересчёта
++        /// возвращает расчётные поля фидеров щита.
++        /// </summary>
++        public object CalculateBoardPower(string boardAcId)
++        {
++            return MainThreadExecutor.Execute(() =>
++            {
++                try
++                {
++                    var net = GetNet(out var err);
++                    if (net == null) return new { success = false, error = err };
++
++                    var board = FindNodeByAcId(net, boardAcId);
++                    if (board == null)
++                        return new { success = false, error = $"Щит {boardAcId} не найден в модели" };
++                    if (board.GetType().FullName != BoardTypeName)
++                        return new { success = false, error = $"Узел {boardAcId} не ElBoard" };
++
++                    // Фидеры щита (вводные + отходящие)
++                    var fiders = new List<object>();
++                    foreach (var collName in new[] { "InputFiders", "OutFiders" })
++                        if (GetProp<object>(board, collName) is IEnumerable coll)
++                            foreach (var f in coll)
++                                if (f != null) fiders.Add(f);
++
++                    // Интерфейс калькулятора — по короткому имени (сборка заранее неизвестна)
++                    var calcIface = FindTypeByName("IElPowerCalculator");
++                    if (calcIface == null)
++                        return new { success = false, error = "Тип IElPowerCalculator не найден ни в одной сборке" };
++
++                    var container = GetContainer(out var cerr);
++                    if (container == null) return new { success = false, error = cerr };
++                    object? calc;
++                    try { calc = ResolveInternal(container, calcIface); }
++                    catch (Exception ex) { return new { success = false, error = "DI Resolve: " + (ex.InnerException?.Message ?? ex.Message) }; }
++                    if (calc == null)
++                        return new { success = false, error = "IElPowerCalculator не зарегистрирован в контейнере" };
++
++                    // Метод CalculatePower — предпочитаем трёхпараметрический (net, fiders, calcObjects)
++                    var methods = calc.GetType().GetMethods().Where(m => m.Name == "CalculatePower").ToList();
++                    if (methods.Count == 0)
++                        return new { success = false, error = "Метод CalculatePower не найден у " + calc.GetType().FullName };
++                    var mi = methods.FirstOrDefault(m => m.GetParameters().Length == 3) ?? methods[0];
++                    var ps = mi.GetParameters();
++                    var signature = calc.GetType().Name + ".CalculatePower(" +
++                        string.Join(", ", ps.Select(p => p.ParameterType.Name + " " + p.Name)) + ")";
++
++                    // Адаптивная сборка аргументов
++                    var args = new object?[ps.Length];
++                    var argNotes = new List<string>();
++                    for (int i = 0; i < ps.Length; i++)
++                    {
++                        var pt = ps[i].ParameterType;
++                        if (pt.IsInstanceOfType(net)) { args[i] = net; argNotes.Add(ps[i].Name + " <= net"); }
++                        else if (pt == typeof(bool)) { args[i] = true; argNotes.Add(ps[i].Name + " <= true"); }
++                        else if (pt != typeof(string) && typeof(IEnumerable).IsAssignableFrom(pt))
++                        {
++                            var elemType = pt.IsArray ? pt.GetElementType()!
++                                : pt.IsGenericType ? pt.GetGenericArguments()[0] : typeof(object);
++                            var list = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(elemType))!;
++                            foreach (var f in fiders)
++                                if (elemType.IsInstanceOfType(f)) list.Add(f);
++                            if (pt.IsArray)
++                            {
++                                var arr = Array.CreateInstance(elemType, list.Count);
++                                list.CopyTo(arr, 0);
++                                args[i] = arr;
++                            }
++                            else args[i] = list;
++                            argNotes.Add($"{ps[i].Name} <= List<{elemType.Name}>[{list.Count}]");
++                        }
++                        else if (!pt.IsInterface && !pt.IsAbstract && pt.GetConstructor(Type.EmptyTypes) != null)
++                        {
++                            try { args[i] = Activator.CreateInstance(pt); argNotes.Add($"{ps[i].Name} <= new {pt.Name}()"); }
++                            catch { args[i] = null; argNotes.Add($"{ps[i].Name} <= null"); }
++                        }
++                        else { args[i] = null; argNotes.Add($"{ps[i].Name} <= null"); }
++                    }
++
++                    object? ret;
++                    try { ret = mi.Invoke(calc, args); }
++                    catch (Exception ex)
++                    {
++                        return new
++                        {
++                            success = false,
++                            error = "CalculatePower: " + (ex.InnerException?.Message ?? ex.Message),
++                            signature,
++                            args = argNotes
++                        };
++                    }
++
++                    // Расчётные поля фидеров после пересчёта
++                    var results = new List<object>();
++                    foreach (var f in fiders)
++                    {
++                        var d = new Dictionary<string, object?>
++                        {
++                            ["title"] = GetProp<string>(f, "TitleName"),
++                            ["ac_id"] = GetProp<object>(f, "AcId")?.ToString()
++                        };
++                        foreach (var pn in new[] { "Pnom", "Pust", "Pcalc", "PcalcDp", "Icalc", "CosPhi", "Kc", "Ksp", "DeltaU", "Ikz2P" })
++                        {
++                            object? v;
++                            try { v = f.GetType().GetProperty(pn)?.GetValue(f); }
++                            catch { continue; }
++                            if (v is Enum e) d[pn] = $"{e} ({Convert.ToInt64(e)})";
++                            else if (v != null) d[pn] = v;
++                        }
++                        results.Add(d);
++                    }
++
++                    return new
++                    {
++                        success = true,
++                        signature,
++                        args = argNotes,
++                        returned = ret?.ToString(),
++                        fiders_count = fiders.Count,
++                        fiders = results
++                    };
++                }
++                catch (Exception ex)
++                {
++                    return new { success = false, error = ex.Message, inner = ex.InnerException?.Message };
++                }
++            });
++        }
++
++        private static Type? FindTypeByName(string shortName)
++        {
++            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
++                foreach (var t in SafeTypes(asm))
++                    if (t.Name == shortName) return t;
++            return null;
++        }
++
+         // ── Доступ к БД оборудования ────────────────────────
+ 
+         private (object? proxy, string? error) GetDbProxy()
