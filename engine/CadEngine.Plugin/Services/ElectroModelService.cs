@@ -516,25 +516,86 @@ namespace CadEngine.Services
                     if (craetor == null)
                         return new { success = false, error = "IDbElFiderCraetor не резолвится" };
 
-                    int before = CollectionCount(GetProp<object>(board, "OutFiders"));
-                    object? newFider;
+                    // Снимок AcId существующих фидеров — чтобы найти новый
+                    var beforeIds = new HashSet<string>();
+                    if (GetProp<object>(board, "OutFiders") is IEnumerable beforeOuts)
+                        foreach (var f in beforeOuts)
+                        {
+                            var bid = GetProp<object>(f, "AcId")?.ToString();
+                            if (bid != null) beforeIds.Add(bid);
+                        }
+                    int before = beforeIds.Count;
+
+                    string createMsg;
                     try
                     {
-                        newFider = craetor.GetType().GetMethod("CreateNewFider")!
-                            .Invoke(craetor, new[] { kit, board });
+                        craetor.GetType().GetMethod("CreateNewFider")!.Invoke(craetor, new[] { kit, board });
+                        createMsg = "CreateNewFider OK";
                     }
                     catch (Exception ex)
                     {
                         return new { success = false, error = "CreateNewFider: " + (ex.InnerException?.Message ?? ex.Message), copied };
                     }
+
+                    // Новый фидер = тот, чьего AcId не было в снимке
+                    object? newFider = null;
+                    if (GetProp<object>(board, "OutFiders") is IEnumerable afterOuts)
+                        foreach (var f in afterOuts)
+                        {
+                            var aid = GetProp<object>(f, "AcId")?.ToString();
+                            if (aid != null && !beforeIds.Contains(aid)) { newFider = f; break; }
+                        }
                     int after = CollectionCount(GetProp<object>(board, "OutFiders"));
 
+                    var steps = new List<string> { createMsg };
+                    if (newFider == null)
+                        steps.Add("Новый фидер не найден в OutFiders (diff по AcId пуст)");
+
+                    // Привязка аппаратов штатными методами фидера (как делает UI Электро)
+                    if (newFider != null && automatDbId > 0)
+                    {
+                        try
+                        {
+                            var m = newFider.GetType().GetMethod("AddSafeAutomat");
+                            if (m == null) steps.Add("Метод AddSafeAutomat не найден у " + newFider.GetType().Name);
+                            else { m.Invoke(newFider, new object[] { automatDbId }); steps.Add($"AddSafeAutomat({automatDbId}) OK"); }
+                        }
+                        catch (Exception ex) { steps.Add("AddSafeAutomat: " + (ex.InnerException?.Message ?? ex.Message)); }
+                    }
+                    if (newFider != null && uzoDbId > 0)
+                    {
+                        try
+                        {
+                            var m = newFider.GetType().GetMethod("AddUzo");
+                            if (m == null) steps.Add("Метод AddUzo не найден у " + newFider.GetType().Name);
+                            else { m.Invoke(newFider, new object[] { uzoDbId }); steps.Add($"AddUzo({uzoDbId}) OK"); }
+                        }
+                        catch (Exception ex) { steps.Add("AddUzo: " + (ex.InnerException?.Message ?? ex.Message)); }
+                    }
+
+                    // Имя группы — напрямую созданному фидеру
+                    if (newFider != null && !string.IsNullOrWhiteSpace(name))
+                    {
+                        try
+                        {
+                            var tp = newFider.GetType().GetProperty("TitleName");
+                            if (tp != null && tp.CanWrite && tp.PropertyType == typeof(string))
+                            {
+                                tp.SetValue(newFider, name);
+                                steps.Add("TitleName установлен: " + name);
+                            }
+                            else steps.Add("TitleName недоступен для записи (CanWrite=" + (tp?.CanWrite.ToString() ?? "свойства нет") + ")");
+                        }
+                        catch (Exception ex) { steps.Add("TitleName: " + (ex.InnerException?.Message ?? ex.Message)); }
+                    }
+
+                    // Сохранение
                     var paperId = ExtractPaperId(boardAcId);
                     string saveMsg;
                     try
                     {
                         net.GetType().GetMethod("SaveObject")!.Invoke(net, new object?[] { board, true, paperId });
-                        saveMsg = $"SaveObject OK (paperId={paperId})";
+                        saveMsg = $"SaveObject(board) OK (paperId={paperId})";
                     }
                     catch (Exception ex)
                     {
@@ -548,9 +609,11 @@ namespace CadEngine.Services
                         automat_db_id = automatDbId,
                         uzo_db_id = uzoDbId,
                         copied,
+                        steps,
                         out_fiders_before = before,
                         out_fiders_after = after,
-                        create_returned = newFider?.GetType().FullName ?? "void/null",
+                        new_fider_found = newFider != null,
+                        new_fider_ac_id = newFider != null ? GetProp<object>(newFider, "AcId")?.ToString() : null,
                         save = saveMsg
                     };
                 }
@@ -607,10 +670,13 @@ namespace CadEngine.Services
         }
 
         /// <summary>
-        /// Расчёт мощности щита штатным IElPowerCalculator Электро.
-        /// Аргументы метода собираются адаптивно (сигнатура добыта разведкой:
-        /// CalculatePower(net, fiders, calcObjects)); после пересчёта
-        /// возвращает расчётные поля фидеров щита.
+        /// Расчёт мощности щита штатным конвейером Электро.
+        /// Для каждого фидера: потребители (IElSupplyObject.GetConsumerData),
+        /// нижестоящие объекты (GetSupplyCalcObjects), штатный расчёт
+        /// (IPowerCalcObject.GetPowerCalculation с перебором значений enum-параметров).
+        /// Если GetPowerCalculation у всех фидеров вернул null — фолбэк на
+        /// IElPowerCalculator.CalculatePower(net, fiders, []), после чего
+        /// расчётные поля читаются из самих фидеров (PcalcDp, IcalcDp, DeltaU...).
         /// </summary>
         public object CalculateBoardPower(string boardAcId)
         {
@@ -627,108 +693,64 @@ namespace CadEngine.Services
                     if (board.GetType().FullName != BoardTypeName)
                         return new { success = false, error = $"Узел {boardAcId} не ElBoard" };
 
-                    // Фидеры щита (вводные + отходящие)
-                    var fiders = new List<object>();
+                    // Фидеры щита с ролью (вводные/отходящие)
+                    var fiders = new List<(object fider, string role)>();
                     foreach (var collName in new[] { "InputFiders", "OutFiders" })
                         if (GetProp<object>(board, collName) is IEnumerable coll)
                             foreach (var f in coll)
-                                if (f != null) fiders.Add(f);
+                                if (f != null)
+                                    fiders.Add((f, collName == "InputFiders" ? "input" : "output"));
 
-                    // Интерфейс калькулятора — по короткому имени (сборка заранее неизвестна)
-                    var calcIface = FindTypeByName("IElPowerCalculator");
-                    if (calcIface == null)
-                        return new { success = false, error = "Тип IElPowerCalculator не найден ни в одной сборке" };
-
-                    var container = GetContainer(out var cerr);
-                    if (container == null) return new { success = false, error = cerr };
-                    object? calc;
-                    try { calc = ResolveInternal(container, calcIface); }
-                    catch (Exception ex) { return new { success = false, error = "DI Resolve: " + (ex.InnerException?.Message ?? ex.Message) }; }
-                    if (calc == null)
-                        return new { success = false, error = "IElPowerCalculator не зарегистрирован в контейнере" };
-
-                    // Метод CalculatePower — предпочитаем трёхпараметрический (net, fiders, calcObjects)
-                    var methods = calc.GetType().GetMethods().Where(m => m.Name == "CalculatePower").ToList();
-                    if (methods.Count == 0)
-                        return new { success = false, error = "Метод CalculatePower не найден у " + calc.GetType().FullName };
-                    var mi = methods.FirstOrDefault(m => m.GetParameters().Length == 3) ?? methods[0];
-                    var ps = mi.GetParameters();
-                    var signature = calc.GetType().Name + ".CalculatePower(" +
-                        string.Join(", ", ps.Select(p => p.ParameterType.Name + " " + p.Name)) + ")";
-
-                    // Адаптивная сборка аргументов
-                    var args = new object?[ps.Length];
-                    var argNotes = new List<string>();
-                    for (int i = 0; i < ps.Length; i++)
+                    var results = new List<(object fider, string role, Dictionary<string, object?> data)>();
+                    double sumPnom = 0;
+                    bool anyCalc = false;
+                    foreach (var (f, role) in fiders)
                     {
-                        var pt = ps[i].ParameterType;
-                        if (pt.IsInstanceOfType(net)) { args[i] = net; argNotes.Add(ps[i].Name + " <= net"); }
-                        else if (pt == typeof(bool)) { args[i] = true; argNotes.Add(ps[i].Name + " <= true"); }
-                        else if (pt != typeof(string) && typeof(IEnumerable).IsAssignableFrom(pt))
-                        {
-                            var elemType = pt.IsArray ? pt.GetElementType()!
-                                : pt.IsGenericType ? pt.GetGenericArguments()[0] : typeof(object);
-                            var list = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(elemType))!;
-                            foreach (var f in fiders)
-                                if (elemType.IsInstanceOfType(f)) list.Add(f);
-                            if (pt.IsArray)
-                            {
-                                var arr = Array.CreateInstance(elemType, list.Count);
-                                list.CopyTo(arr, 0);
-                                args[i] = arr;
-                            }
-                            else args[i] = list;
-                            argNotes.Add($"{ps[i].Name} <= List<{elemType.Name}>[{list.Count}]");
-                        }
-                        else if (!pt.IsInterface && !pt.IsAbstract && pt.GetConstructor(Type.EmptyTypes) != null)
-                        {
-                            try { args[i] = Activator.CreateInstance(pt); argNotes.Add($"{ps[i].Name} <= new {pt.Name}()"); }
-                            catch { args[i] = null; argNotes.Add($"{ps[i].Name} <= null"); }
-                        }
-                        else { args[i] = null; argNotes.Add($"{ps[i].Name} <= null"); }
+                        var d = (Dictionary<string, object?>)CalcOneSupplyObject(f, out var pnom, out _);
+                        d["role"] = role;
+                        if (pnom != null) sumPnom += pnom.Value;
+                        if (d.ContainsKey("calc")) anyCalc = true;
+                        results.Add((f, role, d));
                     }
 
-                    object? ret;
-                    try { ret = mi.Invoke(calc, args); }
-                    catch (Exception ex)
-                    {
-                        return new
-                        {
-                            success = false,
-                            error = "CalculatePower: " + (ex.InnerException?.Message ?? ex.Message),
-                            signature,
-                            args = argNotes
-                        };
-                    }
+                    // Фолбэк: штатный калькулятор, если GetPowerCalculation нигде не сработал
+                    string? fallbackNote = null;
+                    if (!anyCalc && fiders.Count > 0)
+                        fallbackNote = RunPowerCalculatorFallback(net, fiders.Select(x => x.fider).ToList());
 
-                    // Расчётные поля фидеров после пересчёта
-                    var results = new List<object>();
-                    foreach (var f in fiders)
+                    // Расчётные поля фидеров — читаем ПОСЛЕ фолбэка (он их и заполняет)
+                    foreach (var (f, _, d) in results)
                     {
-                        var d = new Dictionary<string, object?>
-                        {
-                            ["title"] = GetProp<string>(f, "TitleName"),
-                            ["ac_id"] = GetProp<object>(f, "AcId")?.ToString()
-                        };
-                        foreach (var pn in new[] { "Pnom", "Pust", "Pcalc", "PcalcDp", "Icalc", "CosPhi", "Kc", "Ksp", "DeltaU", "Ikz2P" })
+                        var fields = new Dictionary<string, object?>();
+                        foreach (var pn in new[] { "PcalcDp", "IcalcDp", "IstartDp", "LeakI", "DeltaU", "Ikz2P", "Ikz3P" })
                         {
                             object? v;
                             try { v = f.GetType().GetProperty(pn)?.GetValue(f); }
                             catch { continue; }
-                            if (v is Enum e) d[pn] = $"{e} ({Convert.ToInt64(e)})";
-                            else if (v != null) d[pn] = v;
+                            if (v != null) fields[pn] = v.ToString();
                         }
-                        results.Add(d);
+                        if (fields.Count > 0) d["fields"] = fields;
                     }
+
+                    // Итог по щиту: Pcalc вводных фидеров (они представляют весь щит);
+                    // если вводных нет — сумма отходящих
+                    double totalPcalc = 0;
+                    var src = results.Where(r => r.role == "input").ToList();
+                    if (src.Count == 0) src = results;
+                    foreach (var r in src)
+                        if (r.data.TryGetValue("fields", out var fo) && fo is Dictionary<string, object?> fd
+                            && fd.TryGetValue("PcalcDp", out var pv))
+                            totalPcalc += ParseRuNum(pv?.ToString()) ?? 0;
 
                     return new
                     {
                         success = true,
-                        signature,
-                        args = argNotes,
-                        returned = ret?.ToString(),
+                        board = GetProp<string>(board, "TitleName"),
                         fiders_count = fiders.Count,
-                        fiders = results
+                        total_consumers_pnom = Math.Round(sumPnom, 3),
+                        total_pcalc = Math.Round(totalPcalc, 3),
+                        fallback_calculator = fallbackNote,
+                        fiders = results.Select(r => (object)r.data).ToList()
                     };
                 }
                 catch (Exception ex)
@@ -736,6 +758,231 @@ namespace CadEngine.Services
                     return new { success = false, error = ex.Message, inner = ex.InnerException?.Message };
                 }
             });
+        }
+
+        /// <summary>
+        /// Фолбэк-расчёт штатным IElPowerCalculator.CalculatePower(net, fiders, []):
+        /// пересчитывает фидеры и заполняет их поля PcalcDp/IcalcDp/DeltaU/Ikz2P.
+        /// Возвращает текстовый статус для диагностики.
+        /// </summary>
+        private string? RunPowerCalculatorFallback(object net, List<object> fiders)
+        {
+            try
+            {
+                var calcIface = FindTypeByName("IElPowerCalculator");
+                if (calcIface == null) return "error: тип IElPowerCalculator не найден";
+                var container = GetContainer(out var cerr);
+                if (container == null) return "error: " + cerr;
+                var calc = ResolveInternal(container, calcIface);
+                if (calc == null) return "error: IElPowerCalculator не зарегистрирован";
+
+                var mi = calc.GetType().GetMethods()
+                    .FirstOrDefault(m => m.Name == "CalculatePower" && m.GetParameters().Length == 3);
+                if (mi == null) return "error: 3-param CalculatePower не найден";
+                var ps = mi.GetParameters();
+
+                var fiderElem = ps[1].ParameterType.IsGenericType
+                    ? ps[1].ParameterType.GetGenericArguments()[0] : typeof(object);
+                var fiderList = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(fiderElem))!;
+                foreach (var f in fiders)
+                    if (fiderElem.IsInstanceOfType(f)) fiderList.Add(f);
+
+                var objElem = ps[2].ParameterType.IsGenericType
+                    ? ps[2].ParameterType.GetGenericArguments()[0] : typeof(object);
+                var emptyList = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(objElem))!;
+
+                mi.Invoke(calc, new object?[] { net, fiderList, emptyList });
+                return $"ok: CalculatePower(List<{fiderElem.Name}>[{fiderList.Count}], List<{objElem.Name}>[0])";
+            }
+            catch (Exception ex)
+            {
+                return "error: " + (ex.InnerException?.Message ?? ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Разведка + расчёт одного объекта электроснабжения (фидер или щит):
+        /// потребители через GetConsumerData(), нижестоящие объекты через
+        /// GetSupplyCalcObjects(true), расчёт через GetPowerCalculation().
+        /// Методы ищутся через интерфейсы — реализация в Электро явная (explicit).
+        /// </summary>
+        private static object CalcOneSupplyObject(object obj, out double? pnomSum, out double? pcalc)
+        {
+            pnomSum = null;
+            pcalc = null;
+            var d = new Dictionary<string, object?>
+            {
+                ["title"] = GetProp<string>(obj, "TitleName"),
+                ["ac_id"] = GetProp<object>(obj, "AcId")?.ToString(),
+                ["type"] = obj.GetType().Name
+            };
+            var t = obj.GetType();
+
+            // 1. Подключённые потребители: IElSupplyObject.GetConsumerData()
+            try
+            {
+                var mCons = FindIfaceMethod(t, "IElSupplyObject", "GetConsumerData", 0);
+                if (mCons == null)
+                {
+                    d["consumers_count"] = -1;
+                    d["consumers_error"] = t.GetInterfaces().Any(i => i.Name == "IElSupplyObject")
+                        ? "метод GetConsumerData не найден в IElSupplyObject"
+                        : "интерфейс IElSupplyObject не реализован";
+                }
+                else if (mCons.Invoke(obj, null) is IEnumerable cons)
+                {
+                    var list = new List<object>();
+                    double sum = 0; int n = 0;
+                    foreach (var c in cons)
+                    {
+                        if (c == null) continue;
+                        n++;
+                        var cd = new Dictionary<string, object?>
+                        {
+                            ["type"] = c.GetType().Name,
+                            ["pnom"] = TryGetNum(c, "Pnom"),
+                            ["cos_phi"] = TryGetNum(c, "CosPhi"),
+                            ["kc"] = TryGetNum(c, "Kc")
+                        };
+                        var co = GetProp<object>(c, "ConsumerObject");
+                        if (co != null)
+                        {
+                            cd["consumer_type"] = co.GetType().Name;
+                            cd["consumer_title"] = GetProp<string>(co, "TitleName");
+                            cd["consumer_acid"] = GetProp<object>(co, "AcId")?.ToString();
+                        }
+                        if (cd["pnom"] is double pv) sum += pv;
+                        list.Add(cd);
+                    }
+                    d["consumers_count"] = n;
+                    d["consumers_pnom_sum"] = Math.Round(sum, 3);
+                    d["consumers"] = list;
+                    pnomSum = sum;
+                }
+                else d["consumers_count"] = 0;
+            }
+            catch (Exception ex) { d["consumers_error"] = ex.InnerException?.Message ?? ex.Message; }
+
+            // 2. Нижестоящие объекты электроснабжения: IElSupplyObject.GetSupplyCalcObjects(true)
+            try
+            {
+                var mSup = FindIfaceMethod(t, "IElSupplyObject", "GetSupplyCalcObjects", 1);
+                if (mSup != null && mSup.Invoke(obj, new object[] { true }) is IEnumerable sup)
+                {
+                    var list = new List<object>();
+                    foreach (var s in sup)
+                    {
+                        if (s == null) continue;
+                        list.Add(new Dictionary<string, object?>
+                        {
+                            ["type"] = s.GetType().Name,
+                            ["title"] = GetProp<string>(s, "TitleName"),
+                            ["ac_id"] = GetProp<object>(s, "AcId")?.ToString()
+                        });
+                    }
+                    d["supply_objects_count"] = list.Count;
+                    d["supply_objects"] = list;
+                }
+            }
+            catch (Exception ex) { d["supply_error"] = ex.InnerException?.Message ?? ex.Message; }
+
+            // 3. Штатный расчёт мощности: IPowerCalcObject.GetPowerCalculation(mode, calcMode)
+            //    Перебираем ВСЕ значения обоих enum'ов: документированной комбинации нет,
+            //    а от неподходящей метод возвращает null (проверено на model10).
+            try
+            {
+                var mPc = FindIfaceMethod(t, "IPowerCalcObject", "GetPowerCalculation", 2);
+                if (mPc == null)
+                {
+                    d["calc_error"] = t.GetInterfaces().Any(i => i.Name == "IPowerCalcObject")
+                        ? "метод GetPowerCalculation не найден в IPowerCalcObject"
+                        : "интерфейс IPowerCalcObject не реализован";
+                }
+                else
+                {
+                    var ps = mPc.GetParameters();
+                    object? pcData = null;
+                    string? usedArgs = null;
+                    foreach (var v0 in Enum.GetValues(ps[0].ParameterType))
+                    {
+                        foreach (var v1 in Enum.GetValues(ps[1].ParameterType))
+                        {
+                            try
+                            {
+                                pcData = mPc.Invoke(obj, new object?[] { v0, v1 });
+                                if (pcData != null) { usedArgs = $"{v0}, {v1}"; break; }
+                            }
+                            catch { }
+                        }
+                        if (pcData != null) break;
+                    }
+                    if (pcData != null)
+                    {
+                        var calc = new Dictionary<string, object?>
+                        {
+                            ["pc_type"] = pcData.GetType().Name,
+                            ["calc_args"] = usedArgs
+                        };
+                        foreach (var pn in new[] { "Pinst", "Pcalc", "Icalc", "CosPhi", "Istart", "DeltaU",
+                                                  "PinstNormal", "PcalcNormal", "IcalcNormal", "Kc", "Ksp" })
+                        {
+                            var v = TryGetNum(pcData, pn);
+                            if (v != null) calc[pn] = v;
+                        }
+                        d["calc"] = calc;
+                        pcalc = TryGetNum(pcData, "Pcalc");
+                    }
+                    else d["calc_error"] = "GetPowerCalculation вернул null на всех комбинациях параметров";
+                }
+            }
+            catch (Exception ex) { d["calc_error"] = ex.InnerException?.Message ?? ex.Message; }
+
+            return d;
+        }
+
+        /// <summary>Число из строки вида "155,36" или "155.36".</summary>
+        private static double? ParseRuNum(string? s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return null;
+            s = s.Trim();
+            if (double.TryParse(s, out var v)) return v;
+            if (double.TryParse(s.Replace(',', '.'),
+                    System.Globalization.NumberStyles.Any,
+                    System.Globalization.CultureInfo.InvariantCulture, out v)) return v;
+            return null;
+        }
+        /// <summary>
+        /// Метод интерфейса по коротким именам интерфейса и метода.
+        /// Работает и при явной (explicit) реализации — когда метод приватный
+        /// и через GetMethods() класса не виден. Вызов interface MethodInfo
+        /// на объекте-реализации корректен.
+        /// </summary>
+        private static MethodInfo? FindIfaceMethod(Type t, string ifaceShortName, string methodName, int paramCount)
+        {
+            foreach (var i in t.GetInterfaces())
+                if (i.Name == ifaceShortName)
+                    return i.GetMethods().FirstOrDefault(m => m.Name == methodName && m.GetParameters().Length == paramCount)
+                        ?? i.GetMethods().FirstOrDefault(m => m.Name == methodName);
+            return null;
+        }
+
+        /// <summary>Числовое значение свойства; умеет разворачивать DesignParameter-подобные обёртки.</summary>
+        private static double? TryGetNum(object obj, string prop)
+        {
+            try
+            {
+                var v = obj.GetType().GetProperty(prop)?.GetValue(obj);
+                if (v == null) return null;
+                if (v is double dv) return Math.Round(dv, 4);
+                if (v is float fv) return Math.Round((double)fv, 4);
+                if (v is int iv) return iv;
+                if (v is decimal dec) return (double)dec;
+                var inner = v.GetType().GetProperty("Value")?.GetValue(v)
+                         ?? v.GetType().GetProperty("Val")?.GetValue(v);
+                if (inner is double idv) return Math.Round(idv, 4);
+                return double.TryParse(v.ToString(), out var parsed) ? parsed : (double?)null;
+            }
+            catch { return null; }
         }
 
         private static Type? FindTypeByName(string shortName)
