@@ -820,7 +820,7 @@ namespace CadEngine
             if (method == "POST" && path == "/api/feature/hole/threaded")
             { var req = ParseBody<SimpleHoleRequest>(request); return req != null ? _featureService.CreateThreadedHole(req.SolidHandle, req.Diameter, req.Depth) : BadRequest(); }
             if (method == "POST" && path == "/api/feature/hole/standard")
-            { var req = ParseBody<StandardHoleRequest>(request); return req != null ? _featureService.CreateStandardHole(req.SolidHandle, req.Diameter, req.Depth, req.Standard) : BadRequest(); }
+            { var req = ParseBody<StandardHoleRequest>(request); return req != null ? _featureService.CreateStandardHole(req.SolidHandle, req.Diameter, req.Depth) : BadRequest(); }
             if (method == "POST" && path == "/api/feature/mirror")
             { var req = ParseBody<MirrorFeatureRequest>(request); return req != null ? _featureService.CreateMirror(req.SolidHandle, req.PlaneHandle) : BadRequest(); }
             if (method == "POST" && path == "/api/feature/pattern/rectangular")
