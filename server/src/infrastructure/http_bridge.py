@@ -1393,7 +1393,7 @@ class HttpCadBridge:
 
     def assembly_mate(self, handle1: str, handle2: str) -> bool:
         result = self._request(
-            "POST", "/api/assembly/mate", json_body={"handle1": handle1, "handle2": handle2}
+            "POST", f"/api/assembly/mate", json_body={"handle1": handle1, "handle2": handle2}
         )
         return self._result_success(result)
 
@@ -1407,7 +1407,7 @@ class HttpCadBridge:
 
     def assembly_tangent(self, handle1: str, handle2: str) -> bool:
         result = self._request(
-            "POST", "/api/assembly/tangent", json_body={"handle1": handle1, "handle2": handle2}
+            "POST", f"/api/assembly/tangent", json_body={"handle1": handle1, "handle2": handle2}
         )
         return self._result_success(result)
 
@@ -1921,7 +1921,7 @@ class HttpCadBridge:
 
     def create_bend(self, handle: str, bend_radius: float = 5.0) -> bool:
         result = self._request(
-            "POST", "/api/sheetmetal/bend", json_body={"handle": handle, "bend_radius": bend_radius}
+            "POST", f"/api/sheetmetal/bend", json_body={"handle": handle, "bend_radius": bend_radius}
         )
         return self._result_success(result)
 
@@ -1985,3 +1985,15 @@ class HttpCadBridge:
         if result and "entities" in result:
             return result["entities"]
         return None
+
+    # ── Электро (CAE model + equipment DB) ─────────────────────
+
+    def electro_get(self, path: str) -> dict[str, Any] | None:
+        """GET an /api/electro/* endpoint of the plugin.
+
+        Path must start with '/api/electro/' — everything else is rejected
+        to keep this generic accessor scoped to the electrical domain.
+        """
+        if not path.startswith("/api/electro/"):
+            raise ValidationError(f"electro_get only allows /api/electro/* paths, got: {path}")
+        return self._request("GET", path)
