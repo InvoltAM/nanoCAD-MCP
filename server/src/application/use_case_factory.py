@@ -35,6 +35,7 @@ from src.application.extended_use_cases import (
 )
 from src.application.history_use_case import HistoryUseCase
 from src.application.parameter_use_case import ParameterUseCase
+from src.application.electro_use_cases import ElectroUseCase
 from src.application.use_cases import (
     BlockUseCase,
     DocumentUseCase,
@@ -195,6 +196,10 @@ class UseCaseFactory:
     @property
     def history(self) -> HistoryUseCase:
         return self._get("history", lambda: HistoryUseCase())
+
+    @property
+    def electro(self) -> ElectroUseCase:
+        return self._get("electro", lambda: ElectroUseCase(self._http))
 
 
 __all__ = ["UseCaseFactory"]
