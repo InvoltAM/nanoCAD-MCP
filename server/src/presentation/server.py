@@ -374,6 +374,13 @@ _TOOL_HANDLER_MAP: dict[str, tuple[str, str]] = {
     "load_configuration": ("parameter", "load_configuration"),
     "list_configurations": ("parameter", "list_configurations"),
     "delete_configuration": ("parameter", "delete_configuration"),
+    # ── Электро (BIM Электро: щиты, группы, расчёты, БД) ──
+    "electro_boards_list": ("electro", "list_boards"),
+    "electro_board_calc": ("electro", "board_calc"),
+    "electro_db_automats": ("electro", "list_db_automats"),
+    "electro_db_uzo": ("electro", "list_db_uzo"),
+    "electro_group_create": ("electro", "create_group"),
+    "electro_node_dump": ("electro", "dump_node"),
 }
 
 
