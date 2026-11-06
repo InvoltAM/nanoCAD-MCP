@@ -1279,6 +1279,7 @@ class HttpCadBridge:
         return []
 
     # -- Trim / Extend / Offset --
+
     def trim_entity(
         self, handle: str, cut_x: float, cut_y: float, keep_start: bool = True
     ) -> dict[str, Any] | None:
@@ -1304,6 +1305,7 @@ class HttpCadBridge:
         )
 
     # -- Layer Management --
+
     def layer_isolate(self, name: str) -> bool:
         result = self._request("POST", f"/api/layer/{name}/isolate")
         return self._result_success(result)
@@ -1325,6 +1327,7 @@ class HttpCadBridge:
         return self._result_success(result)
 
     # -- DIMLINEAR --
+
     def create_linear_dimension(
         self,
         x1: float,
@@ -1350,6 +1353,7 @@ class HttpCadBridge:
         )
 
     # -- SWEEP / LOFT / FILLETEDGE / CHAMFEREDGE --
+
     def sweep_solid(self, profile_handle: str, path_handle: str) -> bool:
         result = self._request(
             "POST",
@@ -1383,6 +1387,7 @@ class HttpCadBridge:
         return None
 
     # -- Assembly --
+
     def insert_part(self, block_name: str, x: float, y: float, z: float) -> bool:
         result = self._request(
             "POST",
@@ -1393,7 +1398,7 @@ class HttpCadBridge:
 
     def assembly_mate(self, handle1: str, handle2: str) -> bool:
         result = self._request(
-            "POST", f"/api/assembly/mate", json_body={"handle1": handle1, "handle2": handle2}
+            "POST", "/api/assembly/mate", json_body={"handle1": handle1, "handle2": handle2}
         )
         return self._result_success(result)
 
@@ -1407,7 +1412,7 @@ class HttpCadBridge:
 
     def assembly_tangent(self, handle1: str, handle2: str) -> bool:
         result = self._request(
-            "POST", f"/api/assembly/tangent", json_body={"handle1": handle1, "handle2": handle2}
+            "POST", "/api/assembly/tangent", json_body={"handle1": handle1, "handle2": handle2}
         )
         return self._result_success(result)
 
@@ -1420,6 +1425,7 @@ class HttpCadBridge:
         return self._result_success(result)
 
     # -- 3D Features --
+
     def create_simple_hole(self, solid_handle: str, diameter: float, depth: float) -> bool:
         result = self._request(
             "POST",
@@ -1674,6 +1680,7 @@ class HttpCadBridge:
         return self._result_success(result)
 
     # -- Selection / QSELECT --
+
     def select_entities(
         self,
         entity_type: str | None = None,
@@ -1697,6 +1704,7 @@ class HttpCadBridge:
         return self._request("GET", f"/api/selection/entity/{handle}")
 
     # -- MultiCAD API --
+
     def create_grid_axis(
         self,
         grid_type: str = "rect",
@@ -1817,6 +1825,7 @@ class HttpCadBridge:
         return self._request("GET", f"/api/multicad/3d-faces/{handle}")
 
     # -- STL Export --
+
     def export_stl(self, path: str, binary: bool = True) -> bool:
         safe = validate_file_path(path)
         result = self._request(
@@ -1825,6 +1834,7 @@ class HttpCadBridge:
         return self._result_success(result)
 
     # -- 2D Constraints --
+
     def constraint_parallel(self, handle1: str, handle2: str) -> bool:
         result = self._request(
             "POST", "/api/constraint/parallel", json_body={"handle1": handle1, "handle2": handle2}
@@ -1921,7 +1931,7 @@ class HttpCadBridge:
 
     def create_bend(self, handle: str, bend_radius: float = 5.0) -> bool:
         result = self._request(
-            "POST", f"/api/sheetmetal/bend", json_body={"handle": handle, "bend_radius": bend_radius}
+            "POST", "/api/sheetmetal/bend", json_body={"handle": handle, "bend_radius": bend_radius}
         )
         return self._result_success(result)
 
@@ -1942,6 +1952,7 @@ class HttpCadBridge:
         return self._result_success(result)
 
     # -- MLEADER --
+
     def create_mleader(
         self,
         arrow_x: float,
