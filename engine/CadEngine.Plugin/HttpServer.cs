@@ -238,6 +238,13 @@ namespace CadEngine
             if (method == "GET" && path == "/api/electro/db/uzo")
                 return _electroModelService.ListDbUzo();
 
+            if (method == "GET" && path == "/api/electro/db/tables")
+                return _electroModelService.ListDbTables();
+
+            if (method == "GET" && TryMatch(path, "/api/electro/model/board/calc/{acid}", out var calcAcid))
+                return _electroModelService.CalculateBoardPower(calcAcid!);
+
+
             if (method == "GET" && path == "/api/electro/model/group/create2")
             {
                 var board = ParseQueryParam(request, "board");
