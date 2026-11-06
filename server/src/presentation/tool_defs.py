@@ -1937,10 +1937,68 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "properties": {"name": S2},
         "required": ["name"],
     },
+    # ── Электро (BIM Электро: щиты, группы, расчёты, БД оборудования) ──
+    {
+        "name": "electro_boards_list",
+        "description": "List electrical boards (щиты) in the current nanoCAD BIM Электро project: title, ac_id, fider counts. Use ac_id for other electro_* tools",
+        "properties": {},
+        "required": [],
+    },
+    {
+        "name": "electro_board_calc",
+        "description": "Power calculation of a board via the native Электро pipeline: per-fider consumers (Pnom, cos phi), Pcalc/Icalc/DeltaU, short-circuit currents, supply chain, board totals",
+        "properties": {
+            "board_ac_id": {"type": S, "description": "Board ac_id from electro_boards_list, e.g. '1692637570:61477-0'"},
+        },
+        "required": ["board_ac_id"],
+    },
+    {
+        "name": "electro_db_automats",
+        "description": "Search circuit breakers (автоматы) in the equipment DB. Filters: query (name/series substring), poles ('1P'/'2P'/'3P'/'4P'/'1P+N'), characteristic ('B'/'C'/'D'/'K'/'Z'), current (trip rating A), limit (default 50). Returns db_id for electro_group_create",
+        "properties": {
+            "query": S2,
+            "poles": S2,
+            "characteristic": S2,
+            "current": {"type": N},
+            "limit": {"type": I},
+        },
+        "required": [],
+    },
+    {
+        "name": "electro_db_uzo",
+        "description": "Search RCDs (УЗО) in the equipment DB. Filters: query (name substring), poles ('2P'/'4P'), current (nominal A), leakage_ma (30/100/300), limit (default 50). Returns db_id for electro_group_create",
+        "properties": {
+            "query": S2,
+            "poles": S2,
+            "current": {"type": N},
+            "leakage_ma": {"type": N},
+            "limit": {"type": I},
+        },
+        "required": [],
+    },
+    {
+        "name": "electro_group_create",
+        "description": "Create a new outgoing group (фидер) on a board with apparatus from the equipment DB. automat_db_id / uzo_db_id are db_id values from electro_db_automats / electro_db_uzo; 0 = skip. Saves the model",
+        "properties": {
+            "board_ac_id": {"type": S, "description": "Board ac_id from electro_boards_list"},
+            "name": {"type": S, "description": "Group name, e.g. 'гр 7'"},
+            "automat_db_id": {"type": I, "description": "db_id of circuit breaker, 0 = none"},
+            "uzo_db_id": {"type": I, "description": "db_id of RCD, 0 = none"},
+        },
+        "required": ["board_ac_id", "name"],
+    },
+    {
+        "name": "electro_node_dump",
+        "description": "Dump all properties of a CAE model node by ac_id (diagnostics: boards, fiders, consumers)",
+        "properties": {
+            "ac_id": {"type": S},
+        },
+        "required": ["ac_id"],
+    },
 ]
 
 # Verify count
-assert len(TOOL_DEFS) == 207, f"Expected 207 tools, got {len(TOOL_DEFS)}"
+assert len(TOOL_DEFS) == 213, f"Expected 213 tools, got {len(TOOL_DEFS)}"
 
 # ── Assign requires_mode to each tool definition ──────────────
 for td in TOOL_DEFS:
