@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "ncad": {
+      "command": "ncad-mcp"
+    }
+  }
+}
