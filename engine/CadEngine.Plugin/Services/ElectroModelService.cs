@@ -642,7 +642,12 @@ namespace CadEngine.Services
                 var gadget = fider.GetType().GetProperty(propName)?.GetValue(fider);
                 if (gadget == null)
                     return $"{propName}: НЕ привязан (ожидался DbId={expectedDbId})";
-                var db = gadget.GetType().GetProperty("Db")?.GetValue(gadget);
+                // GetProperty("Db") у ElAutomat даёт Ambiguous match (теневое свойство) —
+                // берём первое читаемое без индексатора из открытого списка.
+                var db = gadget.GetType()
+                    .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                    .FirstOrDefault(x => x.Name == "Db" && x.CanRead && x.GetIndexParameters().Length == 0)
+                    ?.GetValue(gadget);
                 int actualId = db != null
                     ? Convert.ToInt32(db.GetType().GetProperty("DbId")?.GetValue(db) ?? -1)
                     : -1;
