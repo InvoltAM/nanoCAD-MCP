@@ -63,6 +63,7 @@ Invoke-RestMethod "http://localhost:5080/api/electro/db/automats?query=ВА47&po
 - #2 API: удаление группы (фидера) из щита + `electro_group_delete`.
 - #3 API: создание щита «с нуля» + `electro_board_create`.
 - #4 MCP: SSE-транспорт (опционально, низкий приоритет).
-- #5 BUG: `AddSafeAutomat` открывает модальный диалог БД — `electro_group_create`
-  зависает без клика пользователя (найдено при тесте M4). Нужен неинтерактивный
-  путь привязки аппаратов; заодно вернуть осмысленный ответ при таймауте MainThreadExecutor.
+
+Закрыто: #5 — неинтерактивная привязка аппаратов в `electro_group_create`
+(виновник модального диалога — `SelectDbObject`, заменён; исправление подтверждено
+на живом nanoCAD: ~1 с, без диалогов, сверка DbId в `steps`).
