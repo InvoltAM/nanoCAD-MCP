@@ -60,10 +60,12 @@ Invoke-RestMethod "http://localhost:5080/api/electro/db/automats?query=ВА47&po
 
 ## Бэклог (трекинг — в GitHub issues)
 
-- #2 API: удаление группы (фидера) из щита + `electro_group_delete`.
 - #3 API: создание щита «с нуля» + `electro_board_create`.
 - #4 MCP: SSE-транспорт (опционально, низкий приоритет).
 
 Закрыто: #5 — неинтерактивная привязка аппаратов в `electro_group_create`
 (виновник модального диалога — `SelectDbObject`, заменён; исправление подтверждено
 на живом nanoCAD: ~1 с, без диалогов, сверка DbId в `steps`).
+Закрыто: #2 — `electro_group_delete` (endpoint + MCP-инструмент, 214 всего;
+удаление через `IAcadObject.Delete()`, подтверждено на живом nanoCAD: ~0,4 с,
+тестовые группы с обеих панелей удалены, расчёт не изменился).
