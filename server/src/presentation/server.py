@@ -380,6 +380,7 @@ _TOOL_HANDLER_MAP: dict[str, tuple[str, str]] = {
     "electro_db_automats": ("electro", "list_db_automats"),
     "electro_db_uzo": ("electro", "list_db_uzo"),
     "electro_group_create": ("electro", "create_group"),
+    "electro_group_delete": ("electro", "delete_group"),
     "electro_node_dump": ("electro", "dump_node"),
 }
 

@@ -632,6 +632,114 @@ namespace CadEngine.Services
         }
 
         /// <summary>
+        /// Удаление отходящей группы (фидера) из щита.
+        /// Неинтерактивно: IAcadObject.Delete() (у ElFider — explicit-реализация,
+        /// вызываем через MethodInfo интерфейса), при необходимости RemoveChild у щита,
+        /// затем SaveObject. Вводные фидеры (InputFiders) не удаляются.
+        /// </summary>
+        public object DeleteGroup(string boardAcId, string fiderAcId)
+        {
+            return MainThreadExecutor.Execute(() =>
+            {
+                try
+                {
+                    var net = GetNet(out var err);
+                    if (net == null) return new { success = false, error = err };
+
+                    var board = FindNodeByAcId(net, boardAcId);
+                    if (board == null)
+                        return new { success = false, error = $"Щит {boardAcId} не найден в модели" };
+                    if (board.GetType().FullName != BoardTypeName)
+                        return new { success = false, error = $"Узел {boardAcId} не ElBoard" };
+
+                    // Ищем фидер среди отходящих
+                    object? fider = null;
+                    string? fiderTitle = null;
+                    if (GetProp<object>(board, "OutFiders") is IEnumerable outs)
+                        foreach (var f in outs)
+                        {
+                            if (f == null) continue;
+                            if (GetProp<object>(f, "AcId")?.ToString() == fiderAcId)
+                            {
+                                fider = f;
+                                fiderTitle = GetProp<string>(f, "TitleName");
+                                break;
+                            }
+                        }
+                    if (fider == null)
+                        return new
+                        {
+                            success = false,
+                            error = $"Фидер {fiderAcId} не найден в OutFiders щита {boardAcId}. " +
+                                    "Вводные фидеры (InputFiders) удалять нельзя."
+                        };
+
+                    int before = CollectionCount(GetProp<object>(board, "OutFiders"));
+                    var steps = new List<string>();
+
+                    // 1. Штатное удаление объекта из модели
+                    try
+                    {
+                        var mDel = FindIfaceMethod(fider.GetType(), "IAcadObject", "Delete", 0);
+                        if (mDel == null) steps.Add("IAcadObject.Delete не найден у " + fider.GetType().Name);
+                        else { mDel.Invoke(fider, null); steps.Add("Delete() вызван"); }
+                    }
+                    catch (Exception ex) { steps.Add("Delete: " + (ex.InnerException?.Message ?? ex.Message)); }
+
+                    // 2. Если фидер ещё в OutFiders — отцепляем от щита
+                    bool stillThere = false;
+                    if (GetProp<object>(board, "OutFiders") is IEnumerable outs2)
+                        foreach (var f in outs2)
+                        {
+                            if (f != null && GetProp<object>(f, "AcId")?.ToString() == fiderAcId)
+                            { stillThere = true; break; }
+                        }
+                    if (stillThere)
+                    {
+                        try
+                        {
+                            var mRm = FindIfaceMethod(board.GetType(), "IAcadObject", "RemoveChild", 1);
+                            if (mRm == null) steps.Add("IAcadObject.RemoveChild не найден у " + board.GetType().Name);
+                            else { mRm.Invoke(board, new[] { fider }); steps.Add("RemoveChild(fider) вызван"); }
+                        }
+                        catch (Exception ex) { steps.Add("RemoveChild: " + (ex.InnerException?.Message ?? ex.Message)); }
+                    }
+
+                    // 3. Сохранение
+                    var paperId = ExtractPaperId(boardAcId);
+                    string saveMsg;
+                    try
+                    {
+                        net.GetType().GetMethod("SaveObject")!.Invoke(net, new object?[] { board, true, paperId });
+                        saveMsg = $"SaveObject(board) OK (paperId={paperId})";
+                    }
+                    catch (Exception ex) { saveMsg = "SaveObject: " + (ex.InnerException?.Message ?? ex.Message); }
+
+                    int after = CollectionCount(GetProp<object>(board, "OutFiders"));
+                    var gone = FindNodeByAcId(net, fiderAcId) == null;
+                    var ok = gone || after < before;
+
+                    return new
+                    {
+                        success = ok,
+                        fider_ac_id = fiderAcId,
+                        fider_title = fiderTitle,
+                        steps,
+                        out_fiders_before = before,
+                        out_fiders_after = after,
+                        fider_gone_from_model = gone,
+                        save = saveMsg,
+                        note = ok ? "" : "Фидер остался в модели — удаление не подтверждено"
+                    };
+                }
+                catch (Exception ex)
+                {
+                    return new { success = false, error = ex.Message, inner = ex.InnerException?.Message };
+                }
+            });
+        }
+
+        /// <summary>
         /// Сверяет, что гаджет фидера (SafeAutomat/Uzo) привязан из БД
         /// с ожидаемым DbId (привязка выполняется CreateNewFider через kit-item).
         /// </summary>

@@ -269,6 +269,15 @@ namespace CadEngine
                     : BadRequest();
             }
 
+            if (method == "GET" && path == "/api/electro/model/group/delete")
+            {
+                var delBoard = ParseQueryParam(request, "board");
+                var delFider = ParseQueryParam(request, "fider");
+                return !string.IsNullOrEmpty(delBoard) && !string.IsNullOrEmpty(delFider)
+                    ? _electroModelService.DeleteGroup(delBoard, delFider)
+                    : BadRequest();
+            }
+
             // System
             if (method == "GET" && path == "/api/system/info")
                 return _systemService.GetInfo();

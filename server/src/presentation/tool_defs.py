@@ -1988,6 +1988,15 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "required": ["board_ac_id", "name"],
     },
     {
+        "name": "electro_group_delete",
+        "description": "Delete an outgoing group (фидер) from a board by its ac_id. Input fiders cannot be deleted. Saves the model; verify the group disappeared in the Электро project tree",
+        "properties": {
+            "board_ac_id": {"type": S, "description": "Board ac_id from electro_boards_list"},
+            "fider_ac_id": {"type": S, "description": "Fider ac_id from electro_board_calc (field ac_id of the group)"},
+        },
+        "required": ["board_ac_id", "fider_ac_id"],
+    },
+    {
         "name": "electro_node_dump",
         "description": "Dump all properties of a CAE model node by ac_id (diagnostics: boards, fiders, consumers)",
         "properties": {
@@ -1998,7 +2007,7 @@ TOOL_DEFS: list[dict[str, Any]] = [
 ]
 
 # Verify count
-assert len(TOOL_DEFS) == 213, f"Expected 213 tools, got {len(TOOL_DEFS)}"
+assert len(TOOL_DEFS) == 214, f"Expected 214 tools, got {len(TOOL_DEFS)}"
 
 # ── Assign requires_mode to each tool definition ──────────────
 for td in TOOL_DEFS:

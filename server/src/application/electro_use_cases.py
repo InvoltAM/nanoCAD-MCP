@@ -229,3 +229,22 @@ class ElectroUseCase:
             f"&uzo={int(uzo_db_id)}"
         )
         return self._get(path)
+
+    def delete_group(self, board_ac_id: str, fider_ac_id: str) -> dict[str, Any]:
+        """Delete an outgoing group (фидер) from a board by its ac_id.
+
+        fider_ac_id is the ac_id of the group (see electro_board_calc field
+        ac_id). Input fiders cannot be deleted.
+        """
+        if not board_ac_id:
+            raise OperationError("board_ac_id is required (see electro_boards_list)")
+        if not fider_ac_id:
+            raise OperationError("fider_ac_id is required (see electro_board_calc)")
+        from urllib.parse import quote
+
+        path = (
+            "/api/electro/model/group/delete"
+            f"?board={quote(board_ac_id, safe='')}"
+            f"&fider={quote(fider_ac_id, safe='')}"
+        )
+        return self._get(path)
