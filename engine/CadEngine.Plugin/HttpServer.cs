@@ -921,7 +921,13 @@ namespace CadEngine
             if (method == "GET" && TryMatch(path, "/api/multicad/3d-faces/{handle}", out var facesHandle))
             { return _multiCadService.Check3dFaces(facesHandle!); }
 
-            return null;
+            // Неизвестный маршрут — явный 404, чтобы не путать с таймаутом
+            // главного потока (null из сервиса обрабатывается отдельно).
+            return new ErrorResponse
+            {
+                Error = $"Not found: {method} {path}",
+                Details = "Unknown route",
+            };
         }
 
         private static bool TryMatch(string path, string pattern, out string? param)
