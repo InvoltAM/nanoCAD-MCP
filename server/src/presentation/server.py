@@ -772,27 +772,25 @@ def create_sse_app(
     full_message_path = mount_path.rstrip("/") + message_path
     sse = SseServerTransport(full_message_path)
 
-    async def handle_sse(scope: Any, receive: Any, send: Any) -> None:
-        try:
-            async with sse.connect_sse(scope, receive, send) as streams:
-                await mcp_server.run(
-                    streams[0],
-                    streams[1],
-                    mcp_server.create_initialization_options(),
-                )
-        except Exception as e:
-            log.exception("SSE handler error", error=str(e))
-            # Send error response if headers not sent yet
+    class _SseAsgiApp:
+        """ASGI-приложение для SSE-потока (Starlette 1.x требует ASGI на Route)."""
+
+        def __init__(self, server: Server, transport: SseServerTransport) -> None:
+            self._server = server
+            self._transport = transport
+
+        async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+            if scope["type"] != "http":
+                return
             try:
-                from starlette.responses import Response
-
-                resp = Response("Internal Server Error", status_code=500, media_type="text/plain")
-                await resp(scope, receive, send)
-            except Exception:
-                log.exception("Failed to send SSE error response")
-
-    async def handle_messages(scope: Any, receive: Any, send: Any) -> None:
-        await sse.handle_post_message(scope, receive, send)
+                async with self._transport.connect_sse(scope, receive, send) as streams:
+                    await self._server.run(
+                        streams[0],
+                        streams[1],
+                        self._server.create_initialization_options(),
+                    )
+            except Exception as e:
+                log.exception("SSE handler error", error=str(e))
 
     routes: list[Route | Mount] = []
     if mount_path:
@@ -800,14 +798,14 @@ def create_sse_app(
             Mount(
                 mount_path,
                 routes=[
-                    Route("/", handle_sse, methods=["GET"]),
-                    Route(message_path, handle_messages, methods=["POST"]),
+                    Route("/", _SseAsgiApp(mcp_server, sse), methods=["GET"]),
+                    Mount(message_path.rstrip("/"), app=sse.handle_post_message),
                 ],
             )
         )
     else:
-        routes.append(Route("/", handle_sse, methods=["GET"]))
-        routes.append(Route(message_path, handle_messages, methods=["POST"]))
+        routes.append(Route("/", _SseAsgiApp(mcp_server, sse), methods=["GET"]))
+        routes.append(Mount(message_path.rstrip("/"), app=sse.handle_post_message))
 
     return Starlette(routes=routes)
 
