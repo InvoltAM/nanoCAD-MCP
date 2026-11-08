@@ -60,7 +60,11 @@ Invoke-RestMethod "http://localhost:5080/api/electro/db/automats?query=ВА47&po
 
 ## Бэклог (трекинг — в GitHub issues)
 
-- #3 API: создание щита «с нуля» + `electro_board_create`.
+- #3 API: создание щита «с нуля» + `electro_board_create`. СТАТУС: глубокая
+  разведка итераций 1–6 + декомпиляция зафиксирована в issue #3 — заблокировано
+  WO-слоем платформы (headless-путь крашит nanoCAD). PoC-endpoint удалён,
+  не восстанавливать вслепую. Перспективы: UI-автоматизация палитры / поиск
+  оркестратора в DI / запрос в Nanosoft.
 - #4 MCP: SSE-транспорт (опционально, низкий приоритет).
 
 Закрыто: #5 — неинтерактивная привязка аппаратов в `electro_group_create`
