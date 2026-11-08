@@ -467,15 +467,15 @@ namespace CadEngine.Services
                     var (proxy, perr) = GetDbProxy();
                     if (proxy == null) return new { success = false, error = perr };
 
-                    // Автомат из БД
+                    // Автомат из БД (тихий поиск по DbId — SelectDbObject открывает
+                    // модальный пикер, см. issue #5)
                     var automatType = FindType("Nanosoft.ObjectLib.ESN.Db.DbImpl.DbElAutomat")!;
                     object? dbAutomat = null;
                     if (automatDbId > 0)
                     {
-                        dbAutomat = proxy.GetType().GetMethod("SelectDbObject", new[] { typeof(Type), typeof(int) })
-                            ?.Invoke(proxy, new object[] { automatType, automatDbId });
+                        dbAutomat = FindDbObjectById(proxy, automatType, automatDbId, out var aerr);
                         if (dbAutomat == null)
-                            return new { success = false, error = $"Автомат с DbId={automatDbId} не найден в БД" };
+                            return new { success = false, error = $"Автомат с DbId={automatDbId} не найден в БД ({aerr})" };
                     }
 
                     // УЗО из БД (опционально)
@@ -483,10 +483,9 @@ namespace CadEngine.Services
                     if (uzoDbId > 0)
                     {
                         var uzoType = FindType("Nanosoft.ObjectLib.ESN.Db.DbImpl.DbElUzo")!;
-                        dbUzo = proxy.GetType().GetMethod("SelectDbObject", new[] { typeof(Type), typeof(int) })
-                            ?.Invoke(proxy, new object[] { uzoType, uzoDbId });
+                        dbUzo = FindDbObjectById(proxy, uzoType, uzoDbId, out var uerr);
                         if (dbUzo == null)
-                            return new { success = false, error = $"УЗО с DbId={uzoDbId} не найдено в БД" };
+                            return new { success = false, error = $"УЗО с DbId={uzoDbId} не найдено в БД ({uerr})" };
                     }
 
                     // Kit item
@@ -1022,6 +1021,30 @@ namespace CadEngine.Services
             try { proxy = ResolveInternal(container, proxyType); } catch (Exception ex) { return (null, ex.InnerException?.Message ?? ex.Message); }
             if (proxy == null) return (null, "IDatabaseProxyComponent не зарегистрирован в контейнере");
             return (proxy, null);
+        }
+
+        /// <summary>
+        /// Находит запись БД оборудования по DbId через LoadTypedSource — тихо, без UI.
+        /// SelectDbObject(Type, int) НЕ использовать: он открывает модальный пикер
+        /// «База данных оборудования» и висит до клика пользователя (issue #5).
+        /// </summary>
+        private static object? FindDbObjectById(object proxy, Type tableType, int dbId, out string? error)
+        {
+            error = null;
+            var items = LoadDbTable(proxy, tableType, out error);
+            if (items == null) return null;
+            foreach (var it in items)
+            {
+                if (it == null) continue;
+                try
+                {
+                    var v = it.GetType().GetProperty("DbId")?.GetValue(it);
+                    if (v != null && Convert.ToInt32(v) == dbId) return it;
+                }
+                catch { }
+            }
+            error = $"Запись с DbId={dbId} не найдена в {tableType.Name}";
+            return null;
         }
 
         private static IEnumerable<object?>? LoadDbTable(object proxy, Type tableType, out string? error)
