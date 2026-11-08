@@ -27,7 +27,8 @@ MCP-сервер для управления nanoCAD 26 / BIM Электро 26 
   M3 — создание групп из БД + нативный расчёт мощности (проверено: 155,36 kW совпало с Электро),
   M4 — 6 инструментов `electro_*` (213 инструментов всего), unit-тесты зелёные.
 
-Следующий шаг — интеграционный тест M4 на живом nanoCAD (см. чек-лист ниже).
+M4-интеграционный тест на живом nanoCAD 26 — ПРОЙДЕН (2026-11-06, все 8 шагов,
+эталон 155,36 kW подтверждён; отчёт — в issue #1). Трекинг задач — в GitHub issues.
 
 ## Правила разработки (обязательны)
 
@@ -48,20 +49,8 @@ MCP-сервер для управления nanoCAD 26 / BIM Электро 26 
 
 ## Чек-лист интеграционного теста M4
 
-Порядок важен — каждый шаг опирается на результат предыдущего:
-
-1. `electro_boards_list` — список щитов, взять `ac_id`.
-2. `electro_node_dump` (ac_id) — дамп узла, подтверждение чтения модели.
-3. `electro_board_calc` (board_ac_id) — нативный расчёт; сверить итоги с Электро
-   (эталон на тестовом щите: 155,36 kW).
-4. `electro_db_automats` (query/poles/characteristic/current) — каталог автоматов, взять `db_id`.
-5. `electro_db_uzo` (poles/current/leakage_ma) — каталог УЗО (можно пропустить: uzo_db_id=0).
-6. `electro_group_create` (board_ac_id, name, automat_db_id, uzo_db_id) — создать фидер,
-   модель сохраняется.
-7. Проверить в nanoCAD: группа появилась на щите, обновить дерево проекта.
-8. `electro_board_calc` повторно — щит считается уже с новой группой.
-
-Прямая проверка без MCP-клиента (PowerShell):
+Пройден 2026-11-06 (nanoCAD 26.0.7410.4946). Подробный отчёт с результатами —
+в issue #1. Прямая проверка без MCP-клиента (PowerShell):
 ```powershell
 Invoke-RestMethod http://localhost:5080/api/system/health
 Invoke-RestMethod http://localhost:5080/api/electro/model/boards
@@ -69,8 +58,11 @@ Invoke-RestMethod "http://localhost:5080/api/electro/model/board/calc/<AC_ID>"
 Invoke-RestMethod "http://localhost:5080/api/electro/db/automats?query=ВА47&poles=1P&characteristic=C&current=16"
 ```
 
-## Бэклог после теста M4
+## Бэклог (трекинг — в GitHub issues)
 
-- Создание щита «с нуля» через API.
-- Удаление тестовой группы TEST-M3 со старого чертежа.
-- SSE-транспорт MCP (опционально).
+- #2 API: удаление группы (фидера) из щита + `electro_group_delete`.
+- #3 API: создание щита «с нуля» + `electro_board_create`.
+- #4 MCP: SSE-транспорт (опционально, низкий приоритет).
+- #5 BUG: `AddSafeAutomat` открывает модальный диалог БД — `electro_group_create`
+  зависает без клика пользователя (найдено при тесте M4). Нужен неинтерактивный
+  путь привязки аппаратов; заодно вернуть осмысленный ответ при таймауте MainThreadExecutor.
