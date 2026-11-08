@@ -550,12 +550,31 @@ namespace CadEngine.Services
                     if (newFider == null)
                         steps.Add("Новый фидер не найден в OutFiders (diff по AcId пуст)");
 
-                    // Проверка привязки аппаратов, заданных через kit-item.
-                    // ВАЖНО: штатные AddSafeAutomat(dbId)/AddUzo(dbId) НЕ вызывать —
-                    // они открывают модальный диалог «База данных оборудования»
-                    // и висят до клика пользователя (issue #5, тест M4).
-                    // Привязка уже произошла внутри CreateNewFider через
-                    // DbElFiderKitItem.SafeAutomat/Uzo — здесь только сверяем.
+                    // Привязка аппаратов по dbId. Модальный пикер открывал НЕ этот
+                    // метод, а SelectDbObject (заменён на FindDbObjectById, issue #5);
+                    // AddSafeAutomat/AddUzo, судя по разбору теста M4, неинтерактивны.
+                    if (newFider != null && automatDbId > 0)
+                    {
+                        try
+                        {
+                            var m = newFider.GetType().GetMethod("AddSafeAutomat");
+                            if (m == null) steps.Add("Метод AddSafeAutomat не найден у " + newFider.GetType().Name);
+                            else { m.Invoke(newFider, new object[] { automatDbId }); steps.Add($"AddSafeAutomat({automatDbId}) вызван"); }
+                        }
+                        catch (Exception ex) { steps.Add("AddSafeAutomat: " + (ex.InnerException?.Message ?? ex.Message)); }
+                    }
+                    if (newFider != null && uzoDbId > 0)
+                    {
+                        try
+                        {
+                            var m = newFider.GetType().GetMethod("AddUzo");
+                            if (m == null) steps.Add("Метод AddUzo не найден у " + newFider.GetType().Name);
+                            else { m.Invoke(newFider, new object[] { uzoDbId }); steps.Add($"AddUzo({uzoDbId}) вызван"); }
+                        }
+                        catch (Exception ex) { steps.Add("AddUzo: " + (ex.InnerException?.Message ?? ex.Message)); }
+                    }
+
+                    // Проверка привязки: сверяем гаджет фидера с запрошенным DbId.
                     if (newFider != null && automatDbId > 0)
                         steps.Add(VerifyGadget(newFider, "SafeAutomat", automatDbId));
                     if (newFider != null && uzoDbId > 0)
