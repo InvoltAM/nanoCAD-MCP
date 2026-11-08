@@ -227,6 +227,9 @@ namespace CadEngine
             if (method == "GET" && path == "/api/electro/model/boards")
                 return _electroModelService.ListBoards();
 
+            if (method == "GET" && TryMatch(path, "/api/electro/model/board/fiders/{acid}", out var fidersAcid))
+                return _electroModelService.ListBoardFiders(fidersAcid!);
+
             if (method == "GET" && TryMatch(path, "/api/electro/model/nodes/{type}", out var nodesType))
                 return _electroModelService.ListNodes(nodesType!);
 

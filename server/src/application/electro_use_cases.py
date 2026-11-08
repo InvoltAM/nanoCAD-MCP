@@ -95,6 +95,12 @@ class ElectroUseCase:
             "boards": data.get("boards", []),
         }
 
+    def board_groups(self, board_ac_id: str) -> dict[str, Any]:
+        """List groups (фидеры) of a board without running a calculation."""
+        if not board_ac_id:
+            raise OperationError("board_ac_id is required (see electro_boards_list)")
+        return self._get(f"/api/electro/model/board/fiders/{board_ac_id}")
+
     def board_calc(self, board_ac_id: str) -> dict[str, Any]:
         """Full power calculation of a board via the native Electra pipeline."""
         if not board_ac_id:

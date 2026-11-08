@@ -42,6 +42,28 @@ class TestCreateGroup:
             electro.create_group("10:20-0", "")
 
 
+class TestBoardGroups:
+    def test_lists_groups_of_board(self, electro: ElectroUseCase, mock_bridge: MagicMock) -> None:
+        mock_bridge.electro_get.return_value = {
+            "success": True,
+            "board": "Панель 1",
+            "count": 2,
+            "fiders": [
+                {"ac_id": "1:2-0", "title": "гр 1-1", "role": "output", "automat": "ВА88-32"},
+                {"ac_id": "1:3-0", "title": "Ввод 1", "role": "input", "automat": None},
+            ],
+        }
+        result = electro.board_groups("10:20-0")
+        assert result["count"] == 2
+        assert result["fiders"][0]["automat"] == "ВА88-32"
+        path = mock_bridge.electro_get.call_args[0][0]
+        assert path == "/api/electro/model/board/fiders/10:20-0"
+
+    def test_requires_board(self, electro: ElectroUseCase) -> None:
+        with pytest.raises(OperationError):
+            electro.board_groups("")
+
+
 class TestDeleteGroup:
     def test_builds_path_and_returns_result(self, electro: ElectroUseCase, mock_bridge: MagicMock) -> None:
         mock_bridge.electro_get.return_value = {

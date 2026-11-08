@@ -1945,6 +1945,14 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "required": [],
     },
     {
+        "name": "electro_board_groups",
+        "description": "List groups (фидеры) of a board without running a calculation: per-group ac_id, title, apparatus (автомат/УЗО), phase count, role (input/output). Use the ac_id values with electro_group_delete or electro_node_dump",
+        "properties": {
+            "board_ac_id": {"type": S, "description": "Board ac_id from electro_boards_list"},
+        },
+        "required": ["board_ac_id"],
+    },
+    {
         "name": "electro_board_calc",
         "description": "Power calculation of a board via the native Электро pipeline: per-fider consumers (Pnom, cos phi), Pcalc/Icalc/DeltaU, short-circuit currents, supply chain, board totals",
         "properties": {
@@ -2007,7 +2015,7 @@ TOOL_DEFS: list[dict[str, Any]] = [
 ]
 
 # Verify count
-assert len(TOOL_DEFS) == 214, f"Expected 214 tools, got {len(TOOL_DEFS)}"
+assert len(TOOL_DEFS) == 215, f"Expected 215 tools, got {len(TOOL_DEFS)}"
 
 # ── Assign requires_mode to each tool definition ──────────────
 for td in TOOL_DEFS:

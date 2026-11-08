@@ -184,7 +184,7 @@ class TestGetTools:
     def test_returns_correct_tool_count(self) -> None:
         """Verify we have the expected number of tool definitions."""
         tools = srv._get_tools()
-        assert len(tools) == 214, f"Expected 214 tools, got {len(tools)}"
+        assert len(tools) == 215, f"Expected 215 tools, got {len(tools)}"
 
     def test_first_tool_is_health_check(self) -> None:
         tools = srv._get_tools()

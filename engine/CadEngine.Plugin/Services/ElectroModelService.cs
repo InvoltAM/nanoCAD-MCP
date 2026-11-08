@@ -189,6 +189,67 @@ namespace CadEngine.Services
             });
         }
 
+        /// <summary>
+        /// Состав щита: вводные и отходящие фидеры с аппаратами.
+        /// Лёгкий список без запуска расчёта (для навигации агента по группам).
+        /// </summary>
+        public object ListBoardFiders(string boardAcId)
+        {
+            return MainThreadExecutor.Execute(() =>
+            {
+                try
+                {
+                    var net = GetNet(out var err);
+                    if (net == null)
+                        return new { success = false, error = err };
+
+                    var board = FindNodeByAcId(net, boardAcId);
+                    if (board == null)
+                        return new { success = false, error = $"Щит {boardAcId} не найден в модели" };
+                    if (board.GetType().FullName != BoardTypeName)
+                        return new { success = false, error = $"Узел {boardAcId} не ElBoard" };
+
+                    var fiders = new List<object>();
+                    foreach (var (collName, role) in new[] { ("InputFiders", "input"), ("OutFiders", "output") })
+                    {
+                        if (GetProp<object>(board, collName) is IEnumerable coll)
+                            foreach (var f in coll)
+                            {
+                                if (f == null) continue;
+                                var automat = GetProp<object>(f, "SafeAutomat");
+                                fiders.Add(new
+                                {
+                                    ac_id = GetProp<object>(f, "AcId")?.ToString(),
+                                    title = GetProp<string>(f, "TitleName"),
+                                    name = GetProp<string>(f, "Name"),
+                                    role,
+                                    fider_type = GetProp<object>(f, "FiderType")?.ToString(),
+                                    phase_count = GetProp<object>(f, "PhaseCount")?.ToString(),
+                                    is_safe_automat = GetProp<bool>(f, "IsSafeAutomat"),
+                                    automat = automat != null
+                                        ? GetProp<string>(automat, "TitleName") ?? automat.ToString()
+                                        : null,
+                                    is_uzo = GetProp<bool>(f, "IsUzo"),
+                                });
+                            }
+                    }
+
+                    return new
+                    {
+                        success = true,
+                        board = GetProp<string>(board, "TitleName"),
+                        board_ac_id = boardAcId,
+                        count = fiders.Count,
+                        fiders
+                    };
+                }
+                catch (Exception ex)
+                {
+                    return new { success = false, error = ex.Message, inner = ex.InnerException?.Message };
+                }
+            });
+        }
+
         /// <summary>Узлы модели по фильтру имени типа (подстрока; "all" — все).</summary>
         public object ListNodes(string typeFilter)
         {
