@@ -136,6 +136,17 @@ namespace CadEngine
                 }
 
                 PluginEntry.DebugLog($"Response OK: {context.Request.HttpMethod} {context.Request.Url?.AbsolutePath}");
+                if (result == null)
+                {
+                    // null из сервиса = таймаут MainThreadExecutor: главный поток nanoCAD
+                    // не выполнил операцию за отведённое время (типичная причина —
+                    // модальный диалог Электро, ждущий клика пользователя).
+                    result = new ErrorResponse
+                    {
+                        Error = "Main thread timeout: nanoCAD не выполнил операцию за 30 с. Вероятна модальность в UI (открыт диалог) — проверьте окно nanoCAD.",
+                        Details = $"{method} {path}"
+                    };
+                }
                 await WriteJsonResponseSafe(context.Response, result);
             }
             catch (Exception ex)

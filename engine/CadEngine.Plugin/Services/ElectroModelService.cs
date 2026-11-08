@@ -551,27 +551,16 @@ namespace CadEngine.Services
                     if (newFider == null)
                         steps.Add("Новый фидер не найден в OutFiders (diff по AcId пуст)");
 
-                    // Привязка аппаратов штатными методами фидера (как делает UI Электро)
+                    // Проверка привязки аппаратов, заданных через kit-item.
+                    // ВАЖНО: штатные AddSafeAutomat(dbId)/AddUzo(dbId) НЕ вызывать —
+                    // они открывают модальный диалог «База данных оборудования»
+                    // и висят до клика пользователя (issue #5, тест M4).
+                    // Привязка уже произошла внутри CreateNewFider через
+                    // DbElFiderKitItem.SafeAutomat/Uzo — здесь только сверяем.
                     if (newFider != null && automatDbId > 0)
-                    {
-                        try
-                        {
-                            var m = newFider.GetType().GetMethod("AddSafeAutomat");
-                            if (m == null) steps.Add("Метод AddSafeAutomat не найден у " + newFider.GetType().Name);
-                            else { m.Invoke(newFider, new object[] { automatDbId }); steps.Add($"AddSafeAutomat({automatDbId}) OK"); }
-                        }
-                        catch (Exception ex) { steps.Add("AddSafeAutomat: " + (ex.InnerException?.Message ?? ex.Message)); }
-                    }
+                        steps.Add(VerifyGadget(newFider, "SafeAutomat", automatDbId));
                     if (newFider != null && uzoDbId > 0)
-                    {
-                        try
-                        {
-                            var m = newFider.GetType().GetMethod("AddUzo");
-                            if (m == null) steps.Add("Метод AddUzo не найден у " + newFider.GetType().Name);
-                            else { m.Invoke(newFider, new object[] { uzoDbId }); steps.Add($"AddUzo({uzoDbId}) OK"); }
-                        }
-                        catch (Exception ex) { steps.Add("AddUzo: " + (ex.InnerException?.Message ?? ex.Message)); }
-                    }
+                        steps.Add(VerifyGadget(newFider, "Uzo", uzoDbId));
 
                     // Имя группы — напрямую созданному фидеру
                     if (newFider != null && !string.IsNullOrWhiteSpace(name))
@@ -622,6 +611,34 @@ namespace CadEngine.Services
                     return new { success = false, error = ex.Message, inner = ex.InnerException?.Message };
                 }
             });
+        }
+
+        /// <summary>
+        /// Сверяет, что гаджет фидера (SafeAutomat/Uzo) привязан из БД
+        /// с ожидаемым DbId (привязка выполняется CreateNewFider через kit-item).
+        /// </summary>
+        private static string VerifyGadget(object fider, string propName, int expectedDbId)
+        {
+            try
+            {
+                var gadget = fider.GetType().GetProperty(propName)?.GetValue(fider);
+                if (gadget == null)
+                    return $"{propName}: НЕ привязан (ожидался DbId={expectedDbId})";
+                var db = gadget.GetType().GetProperty("Db")?.GetValue(gadget);
+                int actualId = db != null
+                    ? Convert.ToInt32(db.GetType().GetProperty("DbId")?.GetValue(db) ?? -1)
+                    : -1;
+                var title = gadget.GetType().GetProperty("TitleName")?.GetValue(gadget)?.ToString()
+                            ?? gadget.GetType().GetProperty("Name")?.GetValue(gadget)?.ToString()
+                            ?? gadget.GetType().Name;
+                return actualId == expectedDbId
+                    ? $"{propName} OK: {title} (DbId={actualId})"
+                    : $"{propName}: привязан «{title}», но DbId={actualId} вместо {expectedDbId}";
+            }
+            catch (Exception ex)
+            {
+                return $"{propName}: проверка не удалась — {ex.InnerException?.Message ?? ex.Message}";
+            }
         }
 
         /// <summary>
